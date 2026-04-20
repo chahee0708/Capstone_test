@@ -10,6 +10,11 @@ services:
     environment:
       - VITE_API_URL=http://localhost:4000
 
+  ml:
+    build: ./ml
+    ports:
+      - "8000:8000"
+
   backend:
     build: ./backend
     ports:
@@ -56,6 +61,8 @@ services:
     depends_on:
       neo4j-loader:
         condition: service_completed_successfully
+      
+
 
 volumes:
   mysql_data:

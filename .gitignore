@@ -29,3 +29,6 @@ neo4j_data/
 
 # VSCode
 .vscode/
+
+venv/
+*.pyc
