@@ -31,16 +31,16 @@ router.post("/", async (req, res) => {
     }
 
     const user = rows[0];
-    //배열이면 그대로 쓰고 아니면 그때만 JSON.parse써서 파싱하셈
     const diseases = Array.isArray(user.diseases)
-      ? user.diseases
-      : JSON.parse(user.diseases || "[]");
+      ? user.diseases.map((d) => d.trim())
+      : JSON.parse(user.diseases || "[]").map((d) => d.trim());
+
     const allergens = Array.isArray(user.allergens)
-      ? user.allergens
-      : JSON.parse(user.allergens || "[]");
+      ? user.allergens.map((a) => a.trim())
+      : JSON.parse(user.allergens || "[]").map((a) => a.trim());
+
     const hasDiseases = diseases.length > 0;
 
-    // ✅ 이 3줄 추가
     console.log("diseases 원본:", user.diseases);
     console.log("diseases 파싱 결과:", diseases);
     console.log("2형 당뇨 포함 여부:", diseases.includes("2형 당뇨"));
@@ -70,8 +70,11 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "음식을 찾을 수 없습니다." });
     }
 
-    // 3. 알레르기 체크 (점수와 무관하게 별도 표시)
-    const foundAllergens = await checkAllergens(session, foodName, allergens);
+    // 3. 알레르기 체크 - 알레르기 있는 유저한테만 실행
+    const foundAllergens =
+      allergens.length > 0
+        ? await checkAllergens(session, foodName, allergens)
+        : null;
 
     const { score, warnings, nutrition, bmi, t2dRisk } = result;
     const rating =

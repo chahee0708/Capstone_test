@@ -38,19 +38,20 @@ services:
     environment:
       - MYSQL_ROOT_PASSWORD=1234
       - MYSQL_DATABASE=fooddb
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci # ← 추가
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   neo4j-loader:
-    image: neo4j:2026
+    image: neo4j:latest
     volumes:
       - neo4j_data:/data
       - ./neo4j.dump:/dumps/neo4j.dump
     command: neo4j-admin database load neo4j --from-path=/dumps --overwrite-destination=true
 
   neo4j:
-    image: neo4j:2026
+    image: neo4j:latest
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -61,8 +62,6 @@ services:
     depends_on:
       neo4j-loader:
         condition: service_completed_successfully
-      
-
 
 volumes:
   mysql_data:
