@@ -43,13 +43,6 @@ services:
       - mysql_data:/var/lib/mysql
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
 
-  neo4j-loader:
-    image: neo4j:latest
-    volumes:
-      - neo4j_data:/data
-      - ./neo4j.dump:/dumps/neo4j.dump
-    command: neo4j-admin database load neo4j --from-path=/dumps --overwrite-destination=true
-
   neo4j:
     image: neo4j:latest
     ports:
@@ -59,9 +52,6 @@ services:
       - NEO4J_AUTH=neo4j/password123
     volumes:
       - neo4j_data:/data
-    depends_on:
-      neo4j-loader:
-        condition: service_completed_successfully
 
 volumes:
   mysql_data:
