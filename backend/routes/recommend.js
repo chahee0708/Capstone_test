@@ -59,7 +59,9 @@ router.post("/", async (req, res) => {
     // 디버그 로그
     console.log("diseases:", diseases);
     console.log("hypertension_stage:", user.hypertension_stage);
-    console.log("ldl_level:", user.ldl_level);
+    console.log("ldl_value:", user.ldl_value);
+    console.log("tg_value:", user.tg_value);
+    console.log("hdl_value:", user.hdl_value);
     console.log("gfr_value:", user.gfr_value);
 
     const hasDiseases = diseases.length > 0;
@@ -76,7 +78,9 @@ router.post("/", async (req, res) => {
     // scoreService로 한꺼번에 전달
     const diseaseDetails = {
       hypertension_stage: user.hypertension_stage || 1,
-      ldl_level: user.ldl_level || "high",
+      ldl_value: user.ldl_value ?? null, // LDL 수치 (mg/dL)
+      tg_value: user.tg_value ?? null, // 중성지방 수치 (mg/dL)
+      hdl_value: user.hdl_value ?? null, // HDL 수치 (mg/dL)
       gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
     };
 

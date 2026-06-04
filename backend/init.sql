@@ -17,9 +17,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- 고혈압 심각도 (기본값: Stage I)
   hypertension_stage INT DEFAULT 1,
 
-  -- 이상지질혈증 심각도 (기본값: high)
-  ldl_level          VARCHAR(20) DEFAULT 'high',
-
+  -- 이상지질혈증 지질 수치 (mg/dL), 건강검진 실측값 저장
+  ldl_value  FLOAT DEFAULT NULL,   -- LDL 콜레스테롤 수치
+  tg_value   FLOAT DEFAULT NULL,   -- 중성지방 수치
+  hdl_value  FLOAT DEFAULT NULL,   -- HDL 콜레스테롤 수치
   -- 신장병 GFR 수치 (기본값: 35 → GFR 20~50 범위 중간값)
   gfr_value          FLOAT DEFAULT 35
 );
@@ -28,10 +29,6 @@ CREATE TABLE IF NOT EXISTS users (
 -- 기존 테이블에 컬럼이 없으면 추가 (이미 컨테이너가 실행된 경우)
 -- 처음 실행이면 위 CREATE TABLE로 이미 포함되어 있으므로 무시됨
 -- ──────────────────────────────────────────────────────────────────
-ALTER TABLE users ADD COLUMN IF NOT EXISTS hypertension_stage INT DEFAULT 1;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS ldl_level VARCHAR(20) DEFAULT 'high';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS gfr_value FLOAT DEFAULT 35;
-
 -- 테스트 데이터 (기존 유저)
 -- 2형 당뇨 환자
 INSERT INTO users (name, age, weight, height, gender, diseases, allergens)
@@ -42,8 +39,8 @@ INSERT INTO users (name, age, weight, height, gender, diseases, allergens, hyper
 VALUES ('이영희', 55, 70, 165, 'female', '["고혈압"]', '[]', 2);
 
 -- 이상지질혈증 (LDL 높음) 환자
-INSERT INTO users (name, age, weight, height, gender, diseases, allergens, ldl_level)
-VALUES ('박민수', 50, 85, 175, 'male', '["이상지질혈증"]', '[]', 'high');
+INSERT INTO users (name, age, weight, height, gender, diseases, allergens, ldl_value, tg_value, hdl_value)
+VALUES ('박민수', 50, 85, 175, 'male', '["이상지질혈증"]', '[]', 165.0, 220.0, 38.0);
 
 -- 신장병 (GFR 30) 환자
 INSERT INTO users (name, age, weight, height, gender, diseases, allergens, gfr_value)

@@ -2,14 +2,9 @@
  * ProfilePage.tsx
  *
  * 변경 사항:
- *   - profile state에 hypertension_stage, ldl_level, gfr_value 추가
- *   - GET/PUT 요청에 새 필드 포함
- *   - 질병 선택 시 심각도 입력 폼 조건부 표시
- *     - 고혈압 → Stage I / Stage II 라디오
- *     - 이상지질혈증 → LDL 수준 셀렉트 (경계/높음/매우높음)
- *     - 신장병 → GFR 수치 숫자 입력
- *   - "만성콩팥병" → "신장병"으로 통일 (scoreService.js와 일치)
- *   - "갑상선 질환" 제거 (구현 제외)
+ *   - 이상지질혈증 심각도: ldl_level(드롭다운) → ldl_value, tg_value, hdl_value(실제 수치 입력)
+ *   - profile state, useEffect, PUT 요청 모두 반영
+ *   - 나머지 코드는 기존과 동일
  */
 
 import { useState, useEffect } from "react";
@@ -30,9 +25,8 @@ import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-const USER_ID = 1; // 로그인 기능 없으므로 고정
+const USER_ID = 1;
 
-// 질병 목록 (갑상선 제거, 만성콩팥병 → 신장병)
 const COMMON_CONDITIONS = [
   "2형 당뇨",
   "1형 당뇨",
@@ -61,10 +55,16 @@ export function ProfilePage() {
     diseases: [] as string[],
     allergens: [] as string[],
 
-    // 질병 심각도 필드
-    hypertension_stage: 1, // 1 = Stage I, 2 = Stage II
-    ldl_level: "high", // "borderline" | "high" | "very_high"
-    gfr_value: 35, // GFR 수치 (0 = 이식환자)
+    // 고혈압 심각도
+    hypertension_stage: 1,
+
+    // 이상지질혈증 — 실제 수치 (mg/dL)
+    ldl_value: null as number | null,
+    tg_value: null as number | null,
+    hdl_value: null as number | null,
+
+    // 신장병 GFR
+    gfr_value: 35,
   });
 
   const [newCondition, setNewCondition] = useState("");
@@ -85,7 +85,9 @@ export function ProfilePage() {
           diseases: data.diseases || [],
           allergens: data.allergens || [],
           hypertension_stage: data.hypertension_stage ?? 1,
-          ldl_level: data.ldl_level ?? "high",
+          ldl_value: data.ldl_value ?? null,
+          tg_value: data.tg_value ?? null,
+          hdl_value: data.hdl_value ?? null,
           gfr_value: data.gfr_value ?? 35,
         });
         setIsLoading(false);
@@ -291,7 +293,7 @@ export function ProfilePage() {
               </h3>
 
               <div className="space-y-6">
-                {/* 고혈압 Stage */}
+                {/* ── 고혈압 Stage ── */}
                 {hasHypertension && (
                   <div>
                     <Label className="text-base font-medium">고혈압 단계</Label>
@@ -327,38 +329,96 @@ export function ProfilePage() {
                   </div>
                 )}
 
-                {/* 이상지질혈증 LDL 수준 */}
+                {/* ── 이상지질혈증 — 지질 수치 3개 입력 ── */}
                 {hasDyslipidemia && (
-                  <div>
-                    <Label
-                      className="text-base font-medium"
-                      htmlFor="ldl_level"
-                    >
-                      LDL 콜레스테롤 수준
-                    </Label>
-                    <p className="text-xs text-gray-500 mb-2">
-                      경계: 130~159 mg/dL / 높음: 160~189 mg/dL / 매우높음: 190
-                      이상
+                  <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <p className="text-sm font-medium text-blue-800">
+                      이상지질혈증 — 지질 수치 입력 (mg/dL)
                     </p>
-                    <select
-                      id="ldl_level"
-                      value={profile.ldl_level}
-                      onChange={(e) =>
-                        setProfile((prev) => ({
-                          ...prev,
-                          ldl_level: e.target.value,
-                        }))
-                      }
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    >
-                      <option value="borderline">경계 (130~159 mg/dL)</option>
-                      <option value="high">높음 (160~189 mg/dL)</option>
-                      <option value="very_high">매우 높음 (190 이상)</option>
-                    </select>
+                    <p className="text-xs text-blue-600">
+                      건강검진 결과지의 수치를 그대로 입력해주세요
+                    </p>
+
+                    {/* LDL */}
+                    <div className="flex items-center gap-3">
+                      <Label className="w-40 text-sm text-gray-700">
+                        LDL 콜레스테롤
+                      </Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 165"
+                        value={profile.ldl_value ?? ""}
+                        onChange={(e) =>
+                          setProfile({
+                            ...profile,
+                            ldl_value:
+                              e.target.value === ""
+                                ? null
+                                : Number(e.target.value),
+                          })
+                        }
+                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <span className="text-xs text-gray-500">
+                        정상 &lt;130 / 경계 130~159 / 높음 160~189 / 매우높음
+                        ≥190
+                      </span>
+                    </div>
+
+                    {/* 중성지방 (TG) */}
+                    <div className="flex items-center gap-3">
+                      <Label className="w-40 text-sm text-gray-700">
+                        중성지방 (TG)
+                      </Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 220"
+                        value={profile.tg_value ?? ""}
+                        onChange={(e) =>
+                          setProfile({
+                            ...profile,
+                            tg_value:
+                              e.target.value === ""
+                                ? null
+                                : Number(e.target.value),
+                          })
+                        }
+                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <span className="text-xs text-gray-500">
+                        정상 &lt;150 / 경계 150~199 / 높음 200~499 / 매우높음
+                        ≥500
+                      </span>
+                    </div>
+
+                    {/* HDL */}
+                    <div className="flex items-center gap-3">
+                      <Label className="w-40 text-sm text-gray-700">
+                        HDL 콜레스테롤
+                      </Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 38"
+                        value={profile.hdl_value ?? ""}
+                        onChange={(e) =>
+                          setProfile({
+                            ...profile,
+                            hdl_value:
+                              e.target.value === ""
+                                ? null
+                                : Number(e.target.value),
+                          })
+                        }
+                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <span className="text-xs text-gray-500">
+                        정상 ≥40 / 낮음(위험) &lt;40
+                      </span>
+                    </div>
                   </div>
                 )}
 
-                {/* 신장병 GFR */}
+                {/* ── 신장병 GFR ── */}
                 {hasCKD && (
                   <div>
                     <Label
@@ -383,7 +443,7 @@ export function ProfilePage() {
                             gfr_value: parseFloat(e.target.value) || 0,
                           }))
                         }
-                        className="w-40"
+                        className="w-40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <span className="text-sm text-gray-500">
                         mL/min/1.73m²
