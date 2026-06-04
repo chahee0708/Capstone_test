@@ -7,6 +7,8 @@ const express = require("express");
 const cors = require("cors");
 const recommendRouter = require("./routes/recommend");
 const userRouter = require("./routes/user");
+const authRouter = require("./routes/auth");
+const authMiddleware = require("./middleware/auth");
 
 const app = express();
 app.use(cors());
@@ -16,8 +18,9 @@ app.get("/", (req, res) => {
   res.json({ message: "백엔드 서버 정상 작동 중!" });
 });
 
-app.use("/recommend", recommendRouter);
-app.use("/users", userRouter); 
+app.use("/auth", authRouter);
+app.use("/recommend", authMiddleware, recommendRouter);
+app.use("/users", authMiddleware, userRouter);
 
 app.listen(4000, () => {
   console.log("백엔드 서버 실행 중: http://localhost:4000");
