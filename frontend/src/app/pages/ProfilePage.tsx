@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   User,
   Heart,
@@ -30,7 +31,6 @@ import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-const USER_ID = 1; // 로그인 기능 없으므로 고정
 
 // 질병 목록 (갑상선 제거, 만성콩팥병 → 신장병)
 const COMMON_CONDITIONS = [
@@ -52,6 +52,8 @@ const COMMON_ALLERGIES = [
 ];
 
 export function ProfilePage() {
+  const { user, token } = useAuth();
+  const USER_ID = user?.id ?? 1;
   const [profile, setProfile] = useState({
     name: "",
     age: 0,
@@ -73,7 +75,9 @@ export function ProfilePage() {
 
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
-    fetch(`${API_URL}/users/${USER_ID}`)
+    fetch(`${API_URL}/users/${USER_ID}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then((res) => res.json())
       .then((data) => {
         setProfile({
@@ -101,7 +105,10 @@ export function ProfilePage() {
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(profile),
       });
       if (!res.ok) throw new Error();
