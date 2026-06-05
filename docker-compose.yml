@@ -20,8 +20,10 @@ services:
     ports:
       - "4000:4000"
     depends_on:
-      - mysql
-      - neo4j
+      mysql:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
     environment:
       - DB_HOST=mysql
       - DB_USER=root
@@ -39,10 +41,15 @@ services:
     environment:
       - MYSQL_ROOT_PASSWORD=1234
       - MYSQL_DATABASE=fooddb
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci # ← 추가
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p1234"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   neo4j:
     image: neo4j:latest

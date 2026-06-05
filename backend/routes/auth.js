@@ -13,8 +13,9 @@ router.post("/register", async (req, res) => {
     return res.status(400).json({ message: "name, email, password가 필요합니다." });
   }
 
-  const conn = await getConnection();
+  let conn;
   try {
+    conn = await getConnection();
     const [existing] = await conn.execute("SELECT id FROM users WHERE email = ?", [email]);
     if (existing.length > 0) {
       return res.status(409).json({ message: "이미 사용 중인 이메일입니다." });
@@ -37,7 +38,7 @@ router.post("/register", async (req, res) => {
     console.error("Register error:", err);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   } finally {
-    await conn.end();
+    if (conn) await conn.end();
   }
 });
 
@@ -48,8 +49,9 @@ router.post("/login", async (req, res) => {
     return res.status(400).json({ message: "email과 password가 필요합니다." });
   }
 
-  const conn = await getConnection();
+  let conn;
   try {
+    conn = await getConnection();
     const [rows] = await conn.execute("SELECT * FROM users WHERE email = ?", [email]);
     if (rows.length === 0) {
       return res.status(401).json({ message: "이메일 또는 비밀번호가 올바르지 않습니다." });
@@ -75,7 +77,7 @@ router.post("/login", async (req, res) => {
     console.error("Login error:", err);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   } finally {
-    await conn.end();
+    if (conn) await conn.end();
   }
 });
 
