@@ -26,16 +26,6 @@ CREATE TABLE IF NOT EXISTS users (
   gfr_value          FLOAT DEFAULT 35
 );
 
--- ──────────────────────────────────────────────────────────────────
--- 기존 테이블에 컬럼이 없으면 추가 (이미 컨테이너가 실행된 경우)
--- 처음 실행이면 위 CREATE TABLE로 이미 포함되어 있으므로 무시됨
--- ──────────────────────────────────────────────────────────────────
-ALTER TABLE users ADD COLUMN IF NOT EXISTS hypertension_stage INT DEFAULT 1;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS ldl_level VARCHAR(20) DEFAULT 'high';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS gfr_value FLOAT DEFAULT 35;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS password VARCHAR(255);
-
 -- 테스트 데이터 (기존 유저)
 -- bcrypt hash for "password123": $2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW
 
