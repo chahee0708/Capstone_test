@@ -54,3 +54,13 @@ VALUES ('김철수', 'user5@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p9
 -- 질병 없는 건강한 사용자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens)
 VALUES ('정하나', 'user6@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 30, 58, 163, 'female', '[]', '[]');
+
+-- 검색기록 테이블
+CREATE TABLE IF NOT EXISTS search_history (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     INT NOT NULL,
+  food_name   VARCHAR(100),
+  verdict     VARCHAR(20),
+  searched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);

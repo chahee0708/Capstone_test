@@ -100,16 +100,28 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "음식을 찾을 수 없습니다." });
     }
 
-    // ── Step 5. 알레르기 체크 ──────────────────────────────────
+    // ── Step 5. 검색기록 저장 ─────────────────────────────────
+    try {
+      const dbHist = await getConnection();
+      await dbHist.execute(
+        "INSERT INTO search_history (user_id, food_name, verdict) VALUES (?, ?, ?)",
+        [userId, foodName, result.verdict]
+      );
+      await dbHist.end();
+    } catch (histErr) {
+      console.error("검색기록 저장 실패:", histErr.message);
+    }
+
+    // ── Step 6. 알레르기 체크 ──────────────────────────────────
     const foundAllergens =
       allergens.length > 0
         ? await checkAllergens(session, foodName, allergens)
         : [];
 
-    // ── Step 6. KDRI 1일 기준값 → 프론트 차트 max값에 사용 ────
+    // ── Step 7. KDRI 1일 기준값 → 프론트 차트 max값에 사용 ────
     const dailyReference = getDailyReference(user.gender, user.age);
 
-    // ── Step 7. 최종 응답 ──────────────────────────────────────
+    // ── Step 8. 최종 응답 ──────────────────────────────────────
     res.json({
       productName: foodName,
       userType: "disease",
