@@ -45,8 +45,10 @@ router.get("/:id", async (req, res) => {
       allergens,
       // 질병 심각도 필드
       hypertension_stage: user.hypertension_stage ?? 1,
-      ldl_level:          user.ldl_level          ?? "high",
-      gfr_value:          user.gfr_value          ?? 35,
+      ldl_value:          user.ldl_value  ?? null,
+      tg_value:           user.tg_value   ?? null,
+      hdl_value:          user.hdl_value  ?? null,
+      gfr_value:          user.gfr_value  ?? 35,
     });
 
   } catch (err) {
@@ -61,7 +63,9 @@ router.put("/:id", async (req, res) => {
   const {
     name, age, weight, height, gender,
     diseases, allergens,
-    hypertension_stage, ldl_level, gfr_value,
+    hypertension_stage,
+    ldl_value, tg_value, hdl_value,
+    gfr_value,
   } = req.body;
 
   try {
@@ -77,7 +81,9 @@ router.put("/:id", async (req, res) => {
         diseases           = ?,
         allergens          = ?,
         hypertension_stage = ?,
-        ldl_level          = ?,
+        ldl_value          = ?,
+        tg_value           = ?,
+        hdl_value          = ?,
         gfr_value          = ?
        WHERE id = ?`,
       [
@@ -89,8 +95,10 @@ router.put("/:id", async (req, res) => {
         JSON.stringify(diseases  || []),
         JSON.stringify(allergens || []),
         hypertension_stage ?? 1,
-        ldl_level          ?? "high",
-        gfr_value          ?? 35,
+        ldl_value ?? null,
+        tg_value  ?? null,
+        hdl_value ?? null,
+        gfr_value ?? 35,
         id,
       ]
     );

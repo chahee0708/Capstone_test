@@ -64,9 +64,11 @@ export function ProfilePage() {
     allergens: [] as string[],
 
     // 질병 심각도 필드
-    hypertension_stage: 1, // 1 = Stage I, 2 = Stage II
-    ldl_level: "high", // "borderline" | "high" | "very_high"
-    gfr_value: 35, // GFR 수치 (0 = 이식환자)
+    hypertension_stage: 1,
+    ldl_value: null as number | null,
+    tg_value:  null as number | null,
+    hdl_value: null as number | null,
+    gfr_value: 35,
   });
 
   const [newCondition, setNewCondition] = useState("");
@@ -89,7 +91,9 @@ export function ProfilePage() {
           diseases: data.diseases || [],
           allergens: data.allergens || [],
           hypertension_stage: data.hypertension_stage ?? 1,
-          ldl_level: data.ldl_level ?? "high",
+          ldl_value: data.ldl_value ?? null,
+          tg_value:  data.tg_value  ?? null,
+          hdl_value: data.hdl_value ?? null,
           gfr_value: data.gfr_value ?? 35,
         });
         setIsLoading(false);
@@ -334,34 +338,60 @@ export function ProfilePage() {
                   </div>
                 )}
 
-                {/* 이상지질혈증 LDL 수준 */}
+                {/* 이상지질혈증 수치 입력 */}
                 {hasDyslipidemia && (
-                  <div>
-                    <Label
-                      className="text-base font-medium"
-                      htmlFor="ldl_level"
-                    >
-                      LDL 콜레스테롤 수준
-                    </Label>
-                    <p className="text-xs text-gray-500 mb-2">
-                      경계: 130~159 mg/dL / 높음: 160~189 mg/dL / 매우높음: 190
-                      이상
+                  <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
+                    <p className="text-sm font-medium text-blue-800">
+                      이상지질혈증 — 지질 수치 입력 (mg/dL)
                     </p>
-                    <select
-                      id="ldl_level"
-                      value={profile.ldl_level}
-                      onChange={(e) =>
-                        setProfile((prev) => ({
-                          ...prev,
-                          ldl_level: e.target.value,
-                        }))
-                      }
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    >
-                      <option value="borderline">경계 (130~159 mg/dL)</option>
-                      <option value="high">높음 (160~189 mg/dL)</option>
-                      <option value="very_high">매우 높음 (190 이상)</option>
-                    </select>
+                    <div className="flex items-center gap-3">
+                      <Label className="w-36 text-sm text-gray-700">LDL 콜레스테롤</Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 165"
+                        value={profile.ldl_value ?? ""}
+                        onChange={(e) =>
+                          setProfile((prev) => ({
+                            ...prev,
+                            ldl_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
+                        }
+                        className="w-28"
+                      />
+                      <span className="text-xs text-gray-500">정상 &lt;130 / 경계 130~159 / 높음 160~189 / 매우높음 ≥190</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Label className="w-36 text-sm text-gray-700">중성지방 (TG)</Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 220"
+                        value={profile.tg_value ?? ""}
+                        onChange={(e) =>
+                          setProfile((prev) => ({
+                            ...prev,
+                            tg_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
+                        }
+                        className="w-28"
+                      />
+                      <span className="text-xs text-gray-500">정상 &lt;150 / 경계 150~199 / 높음 200~499 / 매우높음 ≥500</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Label className="w-36 text-sm text-gray-700">HDL 콜레스테롤</Label>
+                      <Input
+                        type="number"
+                        placeholder="예: 38"
+                        value={profile.hdl_value ?? ""}
+                        onChange={(e) =>
+                          setProfile((prev) => ({
+                            ...prev,
+                            hdl_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
+                        }
+                        className="w-28"
+                      />
+                      <span className="text-xs text-gray-500">정상 ≥40 / 낮음(위험) &lt;40</span>
+                    </div>
                   </div>
                 )}
 

@@ -343,51 +343,61 @@ function evaluateHypertension(nutrition, stage) {
 /**
  * 이상지질혈증 판정
  *
- * 근거:
- *   - 포화지방: Grundy SM et al., Circulation 2019 (ACC/AHA 2018), Section 5, p.e289
- *     경계(borderline): 에너지 10% (WHO 2023)
- *     높음(high):       에너지 7%
- *     매우높음(very_high): 에너지 5%
- *   - 트랜스지방: WHO 2023, Chapter 4 (에너지 1% 미만)
- *   - 콜레스테롤: ACC/AHA 2018 + 한국지질동맥경화학회 2022
- *     경계: 300mg/일, 높음/매우높음: 200mg/일
- *
- * TODO: 식이섬유 — Neo4j 데이터 보강 후 추가
+ * 근거: 한국지질동맥경화학회 이상지질혈증 진료지침 제5판 (2022) Chapter 3
  *
  * @param {object} nutrition
- * @param {number} energy - KDRI 1일 에너지 (kcal)
- * @param {string} ldlLevel - 'borderline' | 'high' | 'very_high'
+ * @param {number} energy   - KDRI 1일 에너지 (kcal)
+ * @param {number} ldlValue - LDL 콜레스테롤 수치 (mg/dL)
+ * @param {number} tgValue  - 중성지방 수치 (mg/dL)
+ * @param {number} hdlValue - HDL 콜레스테롤 수치 (mg/dL)
  */
-function evaluateDyslipidemia(nutrition, energy, ldlLevel) {
-  // 포화지방 에너지 비율 결정
-  const satFatPct =
-    ldlLevel === "borderline" ? 0.1 : ldlLevel === "high" ? 0.07 : 0.05; // very_high
+function evaluateDyslipidemia(nutrition, energy, ldlValue, tgValue, hdlValue) {
+  // LDL: 0=정상(<130), 1=경계(130~159), 2=높음(160~189), 3=매우높음(≥190)
+  const ldlSev =
+    ldlValue >= 190 ? 3 :
+    ldlValue >= 160 ? 2 :
+    ldlValue >= 130 ? 1 : 0;
 
-  // 에너지 비율 → g/일 변환 (지방 1g = 9kcal)
-  const satFatLimit = (energy * satFatPct) / 9;
-  const transFatLimit = (energy * 0.01) / 9; // WHO: 에너지 1% 미만
+  // TG: 0=정상(<150), 1=경계(150~199), 2=높음(200~499), 3=매우높음(≥500)
+  const tgSev =
+    tgValue >= 500 ? 3 :
+    tgValue >= 200 ? 2 :
+    tgValue >= 150 ? 1 : 0;
 
-  // 콜레스테롤 한도
-  const cholLimit = ldlLevel === "borderline" ? 300 : 200;
+  // HDL: 0=정상(≥40), 1=낮음(<40)
+  const hdlLow = hdlValue < 40 ? 1 : 0;
 
-  return combineResults([
-    {
-      nutrientName: "포화지방",
-      value: nutrition.saturatedFat,
-      dailyLimit: satFatLimit,
-    },
-    {
-      nutrientName: "트랜스지방",
-      value: nutrition.transFat,
-      dailyLimit: transFatLimit,
-    },
-    {
-      nutrientName: "콜레스테롤",
-      value: nutrition.cholesterol,
-      dailyLimit: cholLimit,
-    },
-    // { nutrientName: "식이섬유", value: nutrition.fiber, dailyLimit: 25 }, // TODO
-  ]);
+  const nutrients = [];
+
+  // 포화지방
+  if (tgSev >= 2) {
+    nutrients.push({ nutrientName: "포화지방", value: nutrition.saturatedFat, dailyLimit: (energy * 0.05) / 9 });
+  } else if (ldlSev >= 1 || tgSev === 1) {
+    nutrients.push({ nutrientName: "포화지방", value: nutrition.saturatedFat, dailyLimit: (energy * 0.07) / 9 });
+  }
+
+  // 트랜스지방 (항상 판정)
+  nutrients.push({ nutrientName: "트랜스지방", value: nutrition.transFat, dailyLimit: (energy * 0.01) / 9 });
+
+  // 탄수화물
+  if (tgSev === 3) {
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.50) / 4 });
+  } else if (tgSev === 2) {
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.55) / 4 });
+  } else if (tgSev === 1) {
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.60) / 4 });
+  } else if (hdlLow === 1) {
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.65) / 4 });
+  }
+
+  // 당류
+  if (tgSev === 3) {
+    nutrients.push({ nutrientName: "당류", value: nutrition.sugar, dailyLimit: (energy * 0.05) / 4 });
+  } else if (tgSev >= 1) {
+    nutrients.push({ nutrientName: "당류", value: nutrition.sugar, dailyLimit: (energy * 0.10) / 4 });
+  }
+
+  return combineResults(nutrients);
 }
 
 /**
@@ -528,8 +538,13 @@ async function scoreForDiseaseUser(
       const stage = diseaseDetails.hypertension_stage || 1;
       result = evaluateHypertension(nutrition, stage);
     } else if (disease === "이상지질혈증") {
-      const ldlLevel = diseaseDetails.ldl_level || "high";
-      result = evaluateDyslipidemia(nutrition, kdri.에너지, ldlLevel);
+      result = evaluateDyslipidemia(
+        nutrition,
+        kdri.에너지,
+        diseaseDetails.ldl_value,
+        diseaseDetails.tg_value,
+        diseaseDetails.hdl_value,
+      );
     } else if (disease === "1형 당뇨") {
       result = evaluateType1Diabetes(nutrition, kdri.에너지, kdri);
     } else if (disease === "신장병") {
