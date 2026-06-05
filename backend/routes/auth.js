@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const pool = require("../db/mysql");
+const { getConnection } = require("../db/mysql");
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "safebite-secret-key";
@@ -13,14 +13,15 @@ router.post("/register", async (req, res) => {
     return res.status(400).json({ message: "name, email, password가 필요합니다." });
   }
 
+  const conn = await getConnection();
   try {
-    const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
+    const [existing] = await conn.execute("SELECT id FROM users WHERE email = ?", [email]);
     if (existing.length > 0) {
       return res.status(409).json({ message: "이미 사용 중인 이메일입니다." });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const [result] = await pool.query(
+    const [result] = await conn.execute(
       "INSERT INTO users (name, email, password, diseases, allergens) VALUES (?, ?, ?, '[]', '[]')",
       [name, email, hashedPassword]
     );
@@ -35,6 +36,8 @@ router.post("/register", async (req, res) => {
   } catch (err) {
     console.error("Register error:", err);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  } finally {
+    await conn.end();
   }
 });
 
@@ -45,8 +48,9 @@ router.post("/login", async (req, res) => {
     return res.status(400).json({ message: "email과 password가 필요합니다." });
   }
 
+  const conn = await getConnection();
   try {
-    const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    const [rows] = await conn.execute("SELECT * FROM users WHERE email = ?", [email]);
     if (rows.length === 0) {
       return res.status(401).json({ message: "이메일 또는 비밀번호가 올바르지 않습니다." });
     }
@@ -70,6 +74,8 @@ router.post("/login", async (req, res) => {
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  } finally {
+    await conn.end();
   }
 });
 
