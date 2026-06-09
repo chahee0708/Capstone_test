@@ -133,10 +133,11 @@ export function FoodAnalysisPage() {
     setErrorMessage("");
 
     try {
+      const userId = localStorage.getItem("userId") || "1";
       const response = await fetch(`${API_URL}/recommend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodName: searchQuery, userId: 1 }),
+        body: JSON.stringify({ foodName: searchQuery, userId: Number(userId) }),
       });
 
       if (!response.ok) {

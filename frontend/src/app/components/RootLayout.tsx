@@ -1,8 +1,16 @@
-import { Outlet, Link, useLocation } from "react-router";
-import { Home, ScanBarcode, User, Heart } from "lucide-react";
+import { Outlet, Link, useLocation, useNavigate } from "react-router";
+import { Home, ScanBarcode, User, Heart, LogOut } from "lucide-react";
 
 export function RootLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const userName = localStorage.getItem("userName") || "사용자";
+
+  const handleLogout = () => {
+    localStorage.removeItem("userId");
+    localStorage.removeItem("userName");
+    navigate("/login");
+  };
 
   const navItems = [
     { path: "/", icon: Home, label: "홈" },
@@ -21,7 +29,7 @@ export function RootLayout() {
               </div>
               <span className="font-semibold text-lg">SafeBite</span>
             </Link>
-            <nav className="hidden md:flex items-center gap-6">
+            <nav className="hidden md:flex items-center gap-4">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
@@ -40,6 +48,16 @@ export function RootLayout() {
                   </Link>
                 );
               })}
+              <div className="flex items-center gap-2 ml-2 pl-4 border-l border-gray-200">
+                <span className="text-sm text-gray-600 font-medium">{userName}</span>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 text-sm text-gray-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>로그아웃</span>
+                </button>
+              </div>
             </nav>
           </div>
         </div>

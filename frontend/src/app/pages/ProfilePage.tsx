@@ -30,7 +30,7 @@ import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-const USER_ID = 1; // 로그인 기능 없으므로 고정
+const USER_ID = Number(localStorage.getItem("userId") || "1");
 
 // 질병 목록 (갑상선 제거, 만성콩팥병 → 신장병)
 const COMMON_CONDITIONS = [
