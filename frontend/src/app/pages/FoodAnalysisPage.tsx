@@ -129,7 +129,8 @@ export function FoodAnalysisPage() {
 
   /**
    * 분석 버튼 클릭 또는 Enter 입력 시 실행
-   * userId: 1 하드코딩 (로그인 기능 미구현 상태)
+   * userId: 6 하드코딩 (로그인 기능 미구현 상태)
+   *   → init.sql의 '정하나' (질병 없음) 유저로 healthy 트랙 확인용
    */
   const handleAnalyze = async () => {
     if (!searchQuery.trim()) return;
@@ -141,7 +142,7 @@ export function FoodAnalysisPage() {
       const response = await fetch(`${API_URL}/recommend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodName: searchQuery, userId: 1 }),
+        body: JSON.stringify({ foodName: searchQuery, userId: 6 }),
       });
 
       if (!response.ok) {
