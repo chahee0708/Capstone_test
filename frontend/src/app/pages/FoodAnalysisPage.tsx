@@ -7,6 +7,7 @@
  *   1. 판정 카드 (추천/주의/비추천)
  *      - 2형 당뇨 사용자: GI 지수 정보 포함
  *      - 다른 질병 사용자: 판정 라벨만 표시
+ *      - 질병 없는 사용자(healthy): 판정 라벨 + BMI/체중 단계 + 좋은 점 안내
  *   2. 주의 영양소 목록 (warnings 배열이 있을 때만)
  *   3. 영양 성분 분석 차트 (max값이 KDRI 기준값으로 표시됨)
  *   4. 알레르기 유발 성분 카드
@@ -52,11 +53,15 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
  */
 type AnalysisResult = {
   productName: string;
+  // "disease" = 질병 보유 사용자, "healthy" = 질병 없는 사용자
   userType: string;
-  diseaseTrack: "diabetes" | "rule";
+  diseaseTrack: "diabetes" | "rule" | "healthy";
   verdict: "추천" | "주의" | "비추천";
   giCategory: "Low" | "Medium" | "High" | null;
   bmi: string;
+  // 아래 두 필드는 질병 없는 사용자(healthy) 응답에만 포함됨
+  bmiCategory?: "저체중" | "정상" | "과체중" | "비만";
+  highlights?: string[];
   nutrition: {
     sugar: number;
     sodium: number;
@@ -329,6 +334,59 @@ export function FoodAnalysisPage() {
                         </h2>
                       </div>
                     </div>
+                  </Card>
+                )}
+
+                {/* ── 카드 1-c: 질병 없는 사용자 → BMI + 좋은 점 안내 ── */}
+                {analysisResult.diseaseTrack === "healthy" && (
+                  <Card className="p-6">
+                    <h3 className="font-semibold mb-1 flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-emerald-600" />
+                      건강 관리 정보
+                    </h3>
+                    <p className="text-xs text-gray-400 mb-4">
+                      기준: KDRI 1일 권장량 + WHO 권고 (체중 단계로 보정)
+                    </p>
+
+                    {/* BMI + 체중 단계 */}
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className="text-sm text-gray-600">BMI</span>
+                      <span className="text-lg font-bold">
+                        {analysisResult.bmi}
+                      </span>
+                      {analysisResult.bmiCategory && (
+                        <Badge
+                          className={
+                            analysisResult.bmiCategory === "정상"
+                              ? "bg-emerald-100 text-emerald-700 border border-emerald-300"
+                              : analysisResult.bmiCategory === "비만"
+                                ? "bg-red-100 text-red-700 border border-red-300"
+                                : "bg-amber-100 text-amber-700 border border-amber-300"
+                          }
+                        >
+                          {analysisResult.bmiCategory}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* 긍정 영양소 안내 */}
+                    {analysisResult.highlights &&
+                    analysisResult.highlights.length > 0 ? (
+                      <ul className="space-y-2">
+                        {analysisResult.highlights.map((h, i) => (
+                          <li
+                            key={i}
+                            className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2"
+                          >
+                            {h}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">
+                        특별히 눈에 띄는 좋은 점은 없습니다.
+                      </p>
+                    )}
                   </Card>
                 )}
 

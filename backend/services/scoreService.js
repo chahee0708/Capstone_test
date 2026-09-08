@@ -10,6 +10,7 @@
  *   - 1형 당뇨      → 규칙 기반 (당류, 탄수화물)
  *   - 신장병        → 규칙 기반 (나트륨, 단백질, GFR 단계별)
  *   - 갑상선        → 미구현 (요오드 데이터 없음, 완전 제외)
+ *   - 질병 없음     → 규칙 기반 (KDRI/WHO 일반인 기준 + BMI 보정)
  *
  * 판정 공식 근거: 영국 FoP 가이드라인 (UK DoH/FSA, 2016, Annex 3 Table 2, p.19)
  *   HIGH(비추천) = 질병별 1일 한도 × 25% / 100g 초과
@@ -567,10 +568,109 @@ async function scoreForDiseaseUser(
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// 건강한 사용자(질병 없음) 판정 로직
+// ─────────────────────────────────────────────────────────────
+
 /**
- * 건강한 사용자 판정 함수
- * 현재 미구현 → recommend.js에서 차단 중
- * TODO: 추후 구현
+ * BMI 단계 구분 (대한비만학회 2022 진료지침, 아시아-태평양 기준)
+ *   저체중 < 18.5 / 정상 18.5~22.9 / 과체중 23~24.9 / 비만 >= 25
+ */
+function getBMICategory(bmi) {
+  if (bmi < 18.5) return "저체중";
+  if (bmi < 23) return "정상";
+  if (bmi < 25) return "과체중";
+  return "비만";
+}
+
+/**
+ * BMI 단계별 에너지·당류 한도 보정 계수
+ *
+ * 근거: KDRI 2020 에너지필요추정량(EER)은 정상 체중 기준으로 산출되므로,
+ *       체중 조절이 필요한 구간에서는 한도를 낮춰 더 보수적으로 판정한다.
+ *   비만   → 0.8 (에너지 섭취 감량 필요)
+ *   과체중 → 0.9
+ *   정상   → 1.0
+ *   저체중 → 1.1 (에너지 섭취 여유)
+ */
+function getBMIFactor(bmiCategory) {
+  if (bmiCategory === "비만") return 0.8;
+  if (bmiCategory === "과체중") return 0.9;
+  if (bmiCategory === "저체중") return 1.1;
+  return 1.0;
+}
+
+/**
+ * 건강한 사용자용 1일 한도 계산
+ *
+ * 근거:
+ *   - 에너지:     KDRI 2020 에너지필요추정량(EER) × BMI 보정
+ *   - 당류:       WHO Guideline on sugars intake (2015) — 총 에너지의 10% 미만
+ *                 (당류 1g = 4kcal) × BMI 보정
+ *   - 나트륨:     KDRI 2020 만성질환위험감소섭취량 (성인 2300mg/일)
+ *   - 포화지방:   KDRI 2020 에너지적정비율 — 총 에너지의 7% 미만 (지방 1g = 9kcal)
+ *   - 트랜스지방: WHO 2023 — 총 에너지의 1% 미만
+ *   - 콜레스테롤: KDRI 2020 — 300mg/일 미만
+ *
+ * @param {object} kdri        - getDailyReference() 결과
+ * @param {number} bmiFactor   - BMI 보정 계수
+ */
+function getHealthyLimits(kdri, bmiFactor) {
+  const energy = kdri.에너지 * bmiFactor;
+
+  return {
+    에너지: energy,
+    당류: (energy * 0.1) / 4,
+    나트륨: kdri.나트륨,
+    포화지방: (energy * 0.07) / 9,
+    트랜스지방: (energy * 0.01) / 9,
+    콜레스테롤: 300,
+  };
+}
+
+/**
+ * 긍정 영양소 안내 문구 생성
+ * 판정(verdict)에는 영향을 주지 않고 참고 정보로만 사용한다.
+ *
+ * 기준: EU 1924/2006 — 1일 기준치의 15% 이상이면 "공급원(source of)"
+ */
+function getHealthyHighlights(nutrition, kdri, limits) {
+  const highlights = [];
+
+  const proteinPercent = Math.round((nutrition.protein / kdri.단백질) * 100);
+  if (proteinPercent >= 15) {
+    highlights.push(`단백질 공급원 (1일 기준 ${proteinPercent}%)`);
+  }
+
+  const sodiumPercent = Math.round((nutrition.sodium / limits.나트륨) * 100);
+  if (sodiumPercent <= 5) {
+    highlights.push(`나트륨 낮음 (1일 기준 ${sodiumPercent}%)`);
+  }
+
+  const sugarPercent = Math.round((nutrition.sugar / limits.당류) * 100);
+  if (sugarPercent <= 5) {
+    highlights.push(`당류 낮음 (1일 기준 ${sugarPercent}%)`);
+  }
+
+  return highlights;
+}
+
+/**
+ * 건강한 사용자(질병 없음)의 음식 적합성 판정
+ *
+ * 질병 트랙과 동일하게 영국 FoP 25%/5% 공식(calcThreshold)을 사용하되,
+ * 한도를 질병 기준이 아닌 일반인 기준(KDRI + WHO)으로 잡는다.
+ *   HIGH(비추천) = 1일 한도의 25% 초과 / 100g
+ *   MID(주의)    = 1일 한도의 5% 초과 / 100g
+ *   LOW(추천)    = 1일 한도의 5% 이하 / 100g
+ *
+ * @param {object} session
+ * @param {string} foodName
+ * @param {number} weight  - 체중 (kg)
+ * @param {number} height  - 키 (cm)
+ * @param {number} age
+ * @param {string} gender
+ * @returns {object|null} 음식이 없으면 null
  */
 async function scoreForHealthyUser(
   session,
@@ -580,7 +680,48 @@ async function scoreForHealthyUser(
   age,
   gender,
 ) {
-  // TODO
+  const nutrition = await getFoodNutrition(session, foodName);
+  if (!nutrition) return null;
+
+  const bmi = calcBMI(weight, height);
+  const bmiCategory = getBMICategory(bmi);
+  const bmiFactor = getBMIFactor(bmiCategory);
+
+  const kdri = getDailyReference(gender, age);
+  const limits = getHealthyLimits(kdri, bmiFactor);
+
+  // ── 영양소별 평가 → 가장 나쁜 등급으로 최종 판정 ──────────
+  const { verdict, warnings } = combineResults([
+    { nutrientName: "열량", value: nutrition.calories, dailyLimit: limits.에너지 },
+    { nutrientName: "당류", value: nutrition.sugar, dailyLimit: limits.당류 },
+    { nutrientName: "나트륨", value: nutrition.sodium, dailyLimit: limits.나트륨 },
+    {
+      nutrientName: "포화지방",
+      value: nutrition.saturatedFat,
+      dailyLimit: limits.포화지방,
+    },
+    {
+      nutrientName: "트랜스지방",
+      value: nutrition.transFat,
+      dailyLimit: limits.트랜스지방,
+    },
+    {
+      nutrientName: "콜레스테롤",
+      value: nutrition.cholesterol,
+      dailyLimit: limits.콜레스테롤,
+    },
+  ]);
+
+  return {
+    diseaseTrack: "healthy",
+    verdict, // "추천" | "주의" | "비추천"
+    giCategory: null, // 건강한 사용자는 ML(GI) 트랙을 쓰지 않음
+    warnings,
+    highlights: getHealthyHighlights(nutrition, kdri, limits), // 긍정 영양소 안내
+    nutrition,
+    bmi: bmi.toFixed(1),
+    bmiCategory, // "저체중" | "정상" | "과체중" | "비만"
+  };
 }
 
 module.exports = {
