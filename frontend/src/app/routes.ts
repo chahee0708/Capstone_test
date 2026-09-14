@@ -5,6 +5,8 @@ import { FoodAnalysisPage } from "./pages/FoodAnalysisPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
+import { SignupDetailFlowPage } from "./pages/SignupDetailFlowPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 
 export const router = createBrowserRouter([
   {
@@ -16,6 +18,10 @@ export const router = createBrowserRouter([
     Component: SignupPage,
   },
   {
+    path: "/signup-detail",
+    Component: SignupDetailFlowPage,
+  },
+  {
     path: "/",
     Component: RootLayout,
     children: [
@@ -23,5 +29,9 @@ export const router = createBrowserRouter([
       { path: "analysis", Component: FoodAnalysisPage },
       { path: "profile", Component: ProfilePage },
     ],
+  },
+  {
+    path: "*",
+    Component: NotFoundPage,
   },
 ]);

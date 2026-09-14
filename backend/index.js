@@ -5,14 +5,20 @@
 
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const recommendRouter = require("./routes/recommend");
 const userRouter = require("./routes/user");
 const authRouter = require("./routes/auth");
 const authMiddleware = require("./middleware/auth");
 
 const app = express();
-app.use(cors());
+
+app.use(cors({
+  origin: "http://localhost:5173",
+  credentials: true,
+}));
 app.use(express.json());
+app.use(cookieParser());
 
 app.get("/", (req, res) => {
   res.json({ message: "백엔드 서버 정상 작동 중!" });

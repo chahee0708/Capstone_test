@@ -33,7 +33,7 @@ export function SignupPage() {
     setErrorMessage("");
     try {
       await authRegister(data.name, data.email, data.password);
-      navigate("/login");
+      navigate("/signup-detail");
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "회원가입 실패");
     }

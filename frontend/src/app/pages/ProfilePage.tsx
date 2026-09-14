@@ -52,7 +52,7 @@ const COMMON_ALLERGIES = [
 ];
 
 export function ProfilePage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const USER_ID = user?.id ?? 1;
   const [profile, setProfile] = useState({
     name: "",
@@ -78,7 +78,7 @@ export function ProfilePage() {
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
     fetch(`${API_URL}/users/${USER_ID}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
     })
       .then((res) => res.json())
       .then((data) => {
@@ -109,9 +109,9 @@ export function ProfilePage() {
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(profile),
       });

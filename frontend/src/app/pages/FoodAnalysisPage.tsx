@@ -115,7 +115,7 @@ const GI_CONFIG = {
 };
 
 export function FoodAnalysisPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResults, setShowResults] = useState(false);
@@ -136,9 +136,9 @@ export function FoodAnalysisPage() {
     try {
       const response = await fetch(`${API_URL}/recommend`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ foodName: searchQuery, userId: user?.id ?? 1 }),
       });
