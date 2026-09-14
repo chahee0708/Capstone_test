@@ -2,12 +2,18 @@
  * ProfilePage.tsx
  *
  * 변경 사항:
- *   - 이상지질혈증 심각도: ldl_level(드롭다운) → ldl_value, tg_value, hdl_value(실제 수치 입력)
- *   - profile state, useEffect, PUT 요청 모두 반영
- *   - 나머지 코드는 기존과 동일
+ *   - profile state에 hypertension_stage, ldl_level, gfr_value 추가
+ *   - GET/PUT 요청에 새 필드 포함
+ *   - 질병 선택 시 심각도 입력 폼 조건부 표시
+ *     - 고혈압 → Stage I / Stage II 라디오
+ *     - 이상지질혈증 → LDL 수준 셀렉트 (경계/높음/매우높음)
+ *     - 신장병 → GFR 수치 숫자 입력
+ *   - "만성콩팥병" → "신장병"으로 통일 (scoreService.js와 일치)
+ *   - "갑상선 질환" 제거 (구현 제외)
  */
 
 import { useState, useEffect } from "react";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   User,
   Heart,
@@ -25,8 +31,8 @@ import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
-const USER_ID = 1;
 
+// 질병 목록 (갑상선 제거, 만성콩팥병 → 신장병)
 const COMMON_CONDITIONS = [
   "2형 당뇨",
   "1형 당뇨",
@@ -46,6 +52,8 @@ const COMMON_ALLERGIES = [
 ];
 
 export function ProfilePage() {
+  const { user, token } = useAuth();
+  const USER_ID = user?.id ?? 1;
   const [profile, setProfile] = useState({
     name: "",
     age: 0,
@@ -55,15 +63,11 @@ export function ProfilePage() {
     diseases: [] as string[],
     allergens: [] as string[],
 
-    // 고혈압 심각도
+    // 질병 심각도 필드
     hypertension_stage: 1,
-
-    // 이상지질혈증 — 실제 수치 (mg/dL)
     ldl_value: null as number | null,
-    tg_value: null as number | null,
+    tg_value:  null as number | null,
     hdl_value: null as number | null,
-
-    // 신장병 GFR
     gfr_value: 35,
   });
 
@@ -73,7 +77,9 @@ export function ProfilePage() {
 
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
-    fetch(`${API_URL}/users/${USER_ID}`)
+    fetch(`${API_URL}/users/${USER_ID}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then((res) => res.json())
       .then((data) => {
         setProfile({
@@ -86,7 +92,7 @@ export function ProfilePage() {
           allergens: data.allergens || [],
           hypertension_stage: data.hypertension_stage ?? 1,
           ldl_value: data.ldl_value ?? null,
-          tg_value: data.tg_value ?? null,
+          tg_value:  data.tg_value  ?? null,
           hdl_value: data.hdl_value ?? null,
           gfr_value: data.gfr_value ?? 35,
         });
@@ -103,7 +109,10 @@ export function ProfilePage() {
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(profile),
       });
       if (!res.ok) throw new Error();
@@ -293,7 +302,7 @@ export function ProfilePage() {
               </h3>
 
               <div className="space-y-6">
-                {/* ── 고혈압 Stage ── */}
+                {/* 고혈압 Stage */}
                 {hasHypertension && (
                   <div>
                     <Label className="text-base font-medium">고혈압 단계</Label>
@@ -329,96 +338,64 @@ export function ProfilePage() {
                   </div>
                 )}
 
-                {/* ── 이상지질혈증 — 지질 수치 3개 입력 ── */}
+                {/* 이상지질혈증 수치 입력 */}
                 {hasDyslipidemia && (
-                  <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                  <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-800">
                       이상지질혈증 — 지질 수치 입력 (mg/dL)
                     </p>
-                    <p className="text-xs text-blue-600">
-                      건강검진 결과지의 수치를 그대로 입력해주세요
-                    </p>
-
-                    {/* LDL */}
                     <div className="flex items-center gap-3">
-                      <Label className="w-40 text-sm text-gray-700">
-                        LDL 콜레스테롤
-                      </Label>
+                      <Label className="w-36 text-sm text-gray-700">LDL 콜레스테롤</Label>
                       <Input
                         type="number"
                         placeholder="예: 165"
                         value={profile.ldl_value ?? ""}
                         onChange={(e) =>
-                          setProfile({
-                            ...profile,
-                            ldl_value:
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value),
-                          })
+                          setProfile((prev) => ({
+                            ...prev,
+                            ldl_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
                         }
-                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-28"
                       />
-                      <span className="text-xs text-gray-500">
-                        정상 &lt;130 / 경계 130~159 / 높음 160~189 / 매우높음
-                        ≥190
-                      </span>
+                      <span className="text-xs text-gray-500">정상 &lt;130 / 경계 130~159 / 높음 160~189 / 매우높음 ≥190</span>
                     </div>
-
-                    {/* 중성지방 (TG) */}
                     <div className="flex items-center gap-3">
-                      <Label className="w-40 text-sm text-gray-700">
-                        중성지방 (TG)
-                      </Label>
+                      <Label className="w-36 text-sm text-gray-700">중성지방 (TG)</Label>
                       <Input
                         type="number"
                         placeholder="예: 220"
                         value={profile.tg_value ?? ""}
                         onChange={(e) =>
-                          setProfile({
-                            ...profile,
-                            tg_value:
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value),
-                          })
+                          setProfile((prev) => ({
+                            ...prev,
+                            tg_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
                         }
-                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-28"
                       />
-                      <span className="text-xs text-gray-500">
-                        정상 &lt;150 / 경계 150~199 / 높음 200~499 / 매우높음
-                        ≥500
-                      </span>
+                      <span className="text-xs text-gray-500">정상 &lt;150 / 경계 150~199 / 높음 200~499 / 매우높음 ≥500</span>
                     </div>
-
-                    {/* HDL */}
                     <div className="flex items-center gap-3">
-                      <Label className="w-40 text-sm text-gray-700">
-                        HDL 콜레스테롤
-                      </Label>
+                      <Label className="w-36 text-sm text-gray-700">HDL 콜레스테롤</Label>
                       <Input
                         type="number"
                         placeholder="예: 38"
                         value={profile.hdl_value ?? ""}
                         onChange={(e) =>
-                          setProfile({
-                            ...profile,
-                            hdl_value:
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value),
-                          })
+                          setProfile((prev) => ({
+                            ...prev,
+                            hdl_value: e.target.value === "" ? null : Number(e.target.value),
+                          }))
                         }
-                        className="w-28 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-28"
                       />
-                      <span className="text-xs text-gray-500">
-                        정상 ≥40 / 낮음(위험) &lt;40
-                      </span>
+                      <span className="text-xs text-gray-500">정상 ≥40 / 낮음(위험) &lt;40</span>
                     </div>
                   </div>
                 )}
 
-                {/* ── 신장병 GFR ── */}
+                {/* 신장병 GFR */}
                 {hasCKD && (
                   <div>
                     <Label
@@ -443,7 +420,7 @@ export function ProfilePage() {
                             gfr_value: parseFloat(e.target.value) || 0,
                           }))
                         }
-                        className="w-40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-40"
                       />
                       <span className="text-sm text-gray-500">
                         mL/min/1.73m²

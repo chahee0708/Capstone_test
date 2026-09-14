@@ -13,6 +13,7 @@
  */
 
 import { useState } from "react";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   Search,
   ScanBarcode,
@@ -114,6 +115,7 @@ const GI_CONFIG = {
 };
 
 export function FoodAnalysisPage() {
+  const { user, token } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResults, setShowResults] = useState(false);
@@ -124,7 +126,6 @@ export function FoodAnalysisPage() {
 
   /**
    * 분석 버튼 클릭 또는 Enter 입력 시 실행
-   * userId: 1 하드코딩 (로그인 기능 미구현 상태)
    */
   const handleAnalyze = async () => {
     if (!searchQuery.trim()) return;
@@ -135,8 +136,11 @@ export function FoodAnalysisPage() {
     try {
       const response = await fetch(`${API_URL}/recommend`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodName: searchQuery, userId: 1 }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ foodName: searchQuery, userId: user?.id ?? 1 }),
       });
 
       if (!response.ok) {

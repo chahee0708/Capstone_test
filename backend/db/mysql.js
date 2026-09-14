@@ -9,8 +9,8 @@ const dbConfig = {
 };
 
 async function getConnection() {
-  return await mysql.createConnection(dbConfig);
-  await conn.execute("SET NAMES utf8mb4"); // ← 추가
+  const conn = await mysql.createConnection(dbConfig);
+  await conn.execute("SET NAMES utf8mb4");
   return conn;
 }
 

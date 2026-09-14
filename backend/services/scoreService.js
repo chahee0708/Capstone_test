@@ -343,43 +343,7 @@ function evaluateHypertension(nutrition, stage) {
 /**
  * 이상지질혈증 판정
  *
- * 근거:
- *   - 포화지방: Grundy SM et al., Circulation 2019 (ACC/AHA 2018), Section 5, p.e289
- *     경계(borderline): 에너지 10% (WHO 2023)
- *     높음(high):       에너지 7%
- *     매우높음(very_high): 에너지 5%
- *   - 트랜스지방: WHO 2023, Chapter 4 (에너지 1% 미만)
- *   - 콜레스테롤: ACC/AHA 2018 + 한국지질동맥경화학회 2022
- *     경계: 300mg/일, 높음/매우높음: 200mg/일
- *
- * TODO: 식이섬유 — Neo4j 데이터 보강 후 추가
- *
- * @param {object} nutrition
- * @param {number} energy - KDRI 1일 에너지 (kcal)
- * @param {string} ldlLevel - 'borderline' | 'high' | 'very_high'
- */
-/**
- * 이상지질혈증 판정
- *
  * 근거: 한국지질동맥경화학회 이상지질혈증 진료지침 제5판 (2022) Chapter 3
- *
- * 지표별 타겟 영양소:
- *   LDL 이상     → 포화지방 ↓, 트랜스지방 ↓
- *   TG 이상      → 포화지방 ↓, 탄수화물 ↓, 당류 ↓, 트랜스지방 ↓
- *   HDL 낮음     → 트랜스지방 ↓, 탄수화물 ↓
- *
- * 포화지방 임계값 (2022 5판 + AHA 인용):
- *   TG ≥ 200          → 에너지 5%
- *   LDL ≥ 1 OR TG=1   → 에너지 7%
- *
- * 탄수화물 임계값 (2022 5판 AHA 인용):
- *   TG 150~199 → 60%, TG 200~499 → 55%, TG ≥500 → 50%
- *   HDL < 40 (TG 정상) → 65% (일반 권고)
- *
- * 당류 임계값 (2022 5판 AHA 인용):
- *   TG 150~499 → 10%, TG ≥500 → 5%
- *
- * 콜레스테롤: 2022 5판 근거 불충분으로 삭제
  *
  * @param {object} nutrition
  * @param {number} energy   - KDRI 1일 에너지 (kcal)
@@ -388,109 +352,50 @@ function evaluateHypertension(nutrition, stage) {
  * @param {number} hdlValue - HDL 콜레스테롤 수치 (mg/dL)
  */
 function evaluateDyslipidemia(nutrition, energy, ldlValue, tgValue, hdlValue) {
-  // ── STEP 1: 각 지표 → severity 변환 ─────────────────────────
   // LDL: 0=정상(<130), 1=경계(130~159), 2=높음(160~189), 3=매우높음(≥190)
   const ldlSev =
-    ldlValue >= 190 ? 3 : ldlValue >= 160 ? 2 : ldlValue >= 130 ? 1 : 0;
+    ldlValue >= 190 ? 3 :
+    ldlValue >= 160 ? 2 :
+    ldlValue >= 130 ? 1 : 0;
 
   // TG: 0=정상(<150), 1=경계(150~199), 2=높음(200~499), 3=매우높음(≥500)
   const tgSev =
-    tgValue >= 500 ? 3 : tgValue >= 200 ? 2 : tgValue >= 150 ? 1 : 0;
+    tgValue >= 500 ? 3 :
+    tgValue >= 200 ? 2 :
+    tgValue >= 150 ? 1 : 0;
 
-  // HDL: 0=정상(≥40), 1=낮음(<40 → 위험)
+  // HDL: 0=정상(≥40), 1=낮음(<40)
   const hdlLow = hdlValue < 40 ? 1 : 0;
 
   const nutrients = [];
 
-  // ── STEP 2: 포화지방 ─────────────────────────────────────────
-  // 근거: 2022 5판 Ch.3 (I, A) + AHA 인용 (p.59)
+  // 포화지방
   if (tgSev >= 2) {
-    // TG ≥ 200 → 에너지 5%
-    const satFatLimit = (energy * 0.05) / 9;
-    nutrients.push({
-      nutrientName: "포화지방",
-      value: nutrition.saturatedFat,
-      dailyLimit: satFatLimit,
-    });
+    nutrients.push({ nutrientName: "포화지방", value: nutrition.saturatedFat, dailyLimit: (energy * 0.05) / 9 });
   } else if (ldlSev >= 1 || tgSev === 1) {
-    // LDL ≥ 130 또는 TG 150~199 → 에너지 7%
-    const satFatLimit = (energy * 0.07) / 9;
-    nutrients.push({
-      nutrientName: "포화지방",
-      value: nutrition.saturatedFat,
-      dailyLimit: satFatLimit,
-    });
+    nutrients.push({ nutrientName: "포화지방", value: nutrition.saturatedFat, dailyLimit: (energy * 0.07) / 9 });
   }
-  // LDL 정상 + TG 정상 → 포화지방 판정 스킵
 
-  // ── STEP 3: 트랜스지방 (항상 판정) ───────────────────────────
-  // 근거: 2022 5판 Ch.3 (I, A) / KDRI 2020 (에너지 1% 미만)
-  const transFatLimit = (energy * 0.01) / 9;
-  nutrients.push({
-    nutrientName: "트랜스지방",
-    value: nutrition.transFat,
-    dailyLimit: transFatLimit,
-  });
+  // 트랜스지방 (항상 판정)
+  nutrients.push({ nutrientName: "트랜스지방", value: nutrition.transFat, dailyLimit: (energy * 0.01) / 9 });
 
-  // ── STEP 4: 탄수화물 ─────────────────────────────────────────
-  // 근거: 2022 5판 Ch.3 AHA 인용 (p.60) + 일반 권고 65% (IIa, B)
+  // 탄수화물
   if (tgSev === 3) {
-    // TG ≥ 500 → 에너지 50%
-    const carbLimit = (energy * 0.5) / 4;
-    nutrients.push({
-      nutrientName: "탄수화물",
-      value: nutrition.carbohydrate,
-      dailyLimit: carbLimit,
-    });
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.50) / 4 });
   } else if (tgSev === 2) {
-    // TG 200~499 → 에너지 55%
-    const carbLimit = (energy * 0.55) / 4;
-    nutrients.push({
-      nutrientName: "탄수화물",
-      value: nutrition.carbohydrate,
-      dailyLimit: carbLimit,
-    });
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.55) / 4 });
   } else if (tgSev === 1) {
-    // TG 150~199 → 에너지 60%
-    const carbLimit = (energy * 0.6) / 4;
-    nutrients.push({
-      nutrientName: "탄수화물",
-      value: nutrition.carbohydrate,
-      dailyLimit: carbLimit,
-    });
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.60) / 4 });
   } else if (hdlLow === 1) {
-    // HDL만 낮고 TG 정상 → 일반 권고 65%
-    const carbLimit = (energy * 0.65) / 4;
-    nutrients.push({
-      nutrientName: "탄수화물",
-      value: nutrition.carbohydrate,
-      dailyLimit: carbLimit,
-    });
+    nutrients.push({ nutrientName: "탄수화물", value: nutrition.carbohydrate, dailyLimit: (energy * 0.65) / 4 });
   }
-  // TG 정상 + HDL 정상 → 탄수화물 판정 스킵
 
-  // ── STEP 5: 당류 ─────────────────────────────────────────────
-  // 근거: 2022 5판 Ch.3 AHA 인용 (p.60~61)
+  // 당류
   if (tgSev === 3) {
-    // TG ≥ 500 → 에너지 5%
-    const sugarLimit = (energy * 0.05) / 4;
-    nutrients.push({
-      nutrientName: "당류",
-      value: nutrition.sugar,
-      dailyLimit: sugarLimit,
-    });
+    nutrients.push({ nutrientName: "당류", value: nutrition.sugar, dailyLimit: (energy * 0.05) / 4 });
   } else if (tgSev >= 1) {
-    // TG 150~499 → 에너지 10%
-    const sugarLimit = (energy * 0.1) / 4;
-    nutrients.push({
-      nutrientName: "당류",
-      value: nutrition.sugar,
-      dailyLimit: sugarLimit,
-    });
+    nutrients.push({ nutrientName: "당류", value: nutrition.sugar, dailyLimit: (energy * 0.10) / 4 });
   }
-  // TG 정상 → 당류 판정 스킵
-
-  // ── 콜레스테롤: 2022 5판 근거 불충분으로 삭제 ────────────────
 
   return combineResults(nutrients);
 }

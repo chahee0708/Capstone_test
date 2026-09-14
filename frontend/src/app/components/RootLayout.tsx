@@ -1,8 +1,14 @@
-import { Outlet, Link, useLocation } from "react-router";
-import { Home, ScanBarcode, User, Heart } from "lucide-react";
+import { Outlet, Link, useLocation, Navigate } from "react-router";
+import { Home, ScanBarcode, User, Heart, LogOut } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
 
 export function RootLayout() {
   const location = useLocation();
+  const { user, logout } = useAuth();
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
 
   const navItems = [
     { path: "/", icon: Home, label: "홈" },
@@ -40,6 +46,13 @@ export function RootLayout() {
                   </Link>
                 );
               })}
+              <button
+                onClick={logout}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="text-sm">로그아웃</span>
+              </button>
             </nav>
           </div>
         </div>
