@@ -1,18 +1,16 @@
 /**
  * ProfilePage.tsx
  *
- * 변경 사항:
- *   - profile state에 hypertension_stage, ldl_level, gfr_value 추가
- *   - GET/PUT 요청에 새 필드 포함
- *   - 질병 선택 시 심각도 입력 폼 조건부 표시
+ * 주요 기능:
+ *   - profile state: hypertension_stage, ldl_value, tg_value, hdl_value, gfr_value 유지
+ *   - 질병 선택 시 심각도 입력 폼 조건부 표시:
  *     - 고혈압 → Stage I / Stage II 라디오
- *     - 이상지질혈증 → LDL 수준 셀렉트 (경계/높음/매우높음)
+ *     - 이상지질혈증 → LDL, 중성지방(TG), HDL 수치(mg/dL) 3가지 입력 필드
  *     - 신장병 → GFR 수치 숫자 입력
- *   - "만성콩팥병" → "신장병"으로 통일 (scoreService.js와 일치)
- *   - "갑상선 질환" 제거 (구현 제외)
+ *   - 건강검진표 사진 기반 OCR 자동 채우기 기능 연동
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import {
   User,
@@ -22,6 +20,8 @@ import {
   Plus,
   X,
   Activity,
+  FileText,
+  Upload,
 } from "lucide-react";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -54,6 +54,8 @@ const COMMON_ALLERGIES = [
 export function ProfilePage() {
   const { user, token } = useAuth();
   const USER_ID = user?.id ?? 1;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [profile, setProfile] = useState({
     name: "",
     age: 0,
@@ -63,7 +65,7 @@ export function ProfilePage() {
     diseases: [] as string[],
     allergens: [] as string[],
 
-    // 질병 심각도 필드
+    // 질병 심각도 필드 (고혈압, 이상지질혈증 3종 수치, 신장병)
     hypertension_stage: 1,
     ldl_value: null as number | null,
     tg_value:  null as number | null,
@@ -74,6 +76,7 @@ export function ProfilePage() {
   const [newCondition, setNewCondition] = useState("");
   const [newAllergy, setNewAllergy] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
 
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
@@ -103,6 +106,65 @@ export function ProfilePage() {
         setIsLoading(false);
       });
   }, []);
+
+  // ── 건강검진표 OCR 자동 입력 처리 ─────────────────────────
+  const handleOcrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("image", file);
+
+    setIsOcrProcessing(true);
+    const toastId = toast.loading("건강검진표를 판독하고 있습니다...");
+
+    try {
+      const res = await fetch(`${API_URL}/ocr`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "OCR 판독에 실패했습니다.");
+
+      const extracted = data.extractedData || {};
+
+      setProfile((prev) => {
+        // 검진표에서 실제로 이상/의심으로 판정된 질환 목록만 설정
+        const detectedDiseases = Array.isArray(extracted.suggestedDiseases)
+          ? extracted.suggestedDiseases
+          : [];
+
+        const hasHypertension = detectedDiseases.includes("고혈압");
+        const hasDyslipidemia = detectedDiseases.includes("이상지질혈증");
+        const hasKidney = detectedDiseases.includes("신장병");
+
+        return {
+          ...prev,
+          name: extracted.name || prev.name,
+          age: (extracted.age && extracted.age > 0) ? extracted.age : prev.age,
+          gender: extracted.gender || prev.gender,
+          height: extracted.height ?? prev.height,
+          weight: extracted.weight ?? prev.weight,
+          diseases: detectedDiseases,
+          hypertension_stage: hasHypertension ? (extracted.hypertensionStage ?? 1) : 1,
+          // 이상지질혈증 3대 수치 (LDL, TG, HDL) 자동 채우기
+          ldl_value: hasDyslipidemia ? (extracted.ldl ?? prev.ldl_value) : null,
+          tg_value:  hasDyslipidemia ? (extracted.tg  ?? prev.tg_value)  : null,
+          hdl_value: hasDyslipidemia ? (extracted.hdl ?? prev.hdl_value) : null,
+          gfr_value: hasKidney ? (extracted.gfr ?? 35) : 35,
+        };
+      });
+
+      toast.success("건강검진표 분석이 완료되었습니다!", { id: toastId });
+    } catch (err: any) {
+      toast.error(`OCR 처리 실패: ${err.message}`, { id: toastId });
+    } finally {
+      setIsOcrProcessing(false);
+      if (e.target) e.target.value = "";
+    }
+  };
 
   // ── 저장 ─────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
@@ -152,11 +214,39 @@ export function ProfilePage() {
   return (
     <div className="min-h-full bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="mb-8">
-          <h1 className="text-2xl md:text-3xl font-bold mb-2">건강 프로필</h1>
-          <p className="text-gray-600">
-            정확한 분석을 위해 건강 정보를 입력해주세요
-          </p>
+        <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold mb-2">건강 프로필</h1>
+            <p className="text-gray-600">
+              정확한 분석을 위해 건강 정보를 입력해주세요
+            </p>
+          </div>
+
+          {/* ── 건강검진표 사진 OCR 자동 채우기 버튼 ── */}
+          <div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleOcrUpload}
+              disabled={isOcrProcessing}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 cursor-pointer shadow-sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isOcrProcessing}
+            >
+              {isOcrProcessing ? (
+                <Upload className="w-4 h-4 mr-2 animate-bounce text-emerald-600" />
+              ) : (
+                <FileText className="w-4 h-4 mr-2 text-emerald-600" />
+              )}
+              사진으로 입력
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-6">
@@ -189,7 +279,8 @@ export function ProfilePage() {
                   <Input
                     id={field.id}
                     type={field.type}
-                    value={(profile as any)[field.key]}
+                    value={(profile as any)[field.key] === 0 && field.type === "number" ? "" : (profile as any)[field.key]}
+                    placeholder={field.type === "number" ? "0" : ""}
                     className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     onChange={(e) =>
                       setProfile((prev) => ({
@@ -338,7 +429,7 @@ export function ProfilePage() {
                   </div>
                 )}
 
-                {/* 이상지질혈증 수치 입력 */}
+                {/* 이상지질혈증 수치 입력 (LDL, 중성지방, HDL 3종) */}
                 {hasDyslipidemia && (
                   <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-800">
