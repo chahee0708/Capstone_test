@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate, Link } from "react-router";
 import { Heart, Mail, Lock, User } from "lucide-react";
@@ -7,6 +7,13 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { useAuth } from "../../contexts/AuthContext";
+import {
+  SignupOcrPanel,
+  SignupPersonalInfoSection,
+  SignupHealthConditionsSection,
+  SignupAllergySection,
+  emptyProfile,
+} from "../components/signup/SignupDetailSections";
 
 type SignupFormValues = {
   name: string;
@@ -19,6 +26,9 @@ export function SignupPage() {
   const { register: authRegister } = useAuth();
   const navigate = useNavigate();
   const [errorMessage, setErrorMessage] = useState("");
+  const [profile, setProfile] = useState(emptyProfile);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [ocrStatus, setOcrStatus] = useState<string>("이미지 미선택");
 
   const {
     register,
@@ -33,15 +43,41 @@ export function SignupPage() {
     setErrorMessage("");
     try {
       await authRegister(data.name, data.email, data.password);
-      navigate("/signup-detail");
+      const payload = {
+        signup: {
+          name: data.name,
+          email: data.email,
+          password: data.password,
+        },
+        profile,
+        selectedImage,
+        ocrStatus,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem("safeBiteSignupComplete", JSON.stringify(payload));
+      navigate("/login");
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "회원가입 실패");
     }
   };
 
+  const skipDetails = () => {
+    const payload = {
+      signup: {
+        name: "",
+        email: "",
+      },
+      profile: emptyProfile,
+      skipped: true,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem("safeBiteSignupComplete", JSON.stringify(payload));
+    navigate("/login");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-4xl">
         <div className="text-center mb-8">
           <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Heart className="w-8 h-8 text-white" />
@@ -137,19 +173,52 @@ export function SignupPage() {
               )}
             </div>
 
+            <div className="mt-6">
+              <SignupOcrPanel
+                profile={profile}
+                setProfile={setProfile}
+                selectedImage={selectedImage}
+                setSelectedImage={setSelectedImage}
+                ocrStatus={ocrStatus}
+                setOcrStatus={setOcrStatus}
+              />
+            </div>
+
+            <div className="mt-6">
+              <SignupPersonalInfoSection profile={profile} setProfile={setProfile} />
+            </div>
+
+            <div className="mt-6">
+              <SignupHealthConditionsSection profile={profile} setProfile={setProfile} />
+            </div>
+
+            <div className="mt-6">
+              <SignupAllergySection profile={profile} setProfile={setProfile} />
+            </div>
+
             {errorMessage && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
                 {errorMessage}
               </div>
             )}
 
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full bg-emerald-600 hover:bg-emerald-700"
-            >
-              {isSubmitting ? "가입 중..." : "회원가입"}
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+              >
+                {isSubmitting ? "가입 중..." : "회원가입"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border-slate-300"
+                onClick={skipDetails}
+              >
+                나중에 입력할게요
+              </Button>
+            </div>
           </form>
 
           <p className="text-center text-sm text-gray-500 mt-6">

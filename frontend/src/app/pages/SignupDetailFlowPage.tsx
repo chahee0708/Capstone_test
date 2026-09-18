@@ -15,15 +15,44 @@ import {
 
 export function SignupDetailFlowPage() {
   const navigate = useNavigate();
+  const draft = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("safeBiteSignupDraft") || "{}");
+    } catch {
+      return {};
+    }
+  })();
+
   const [signup, setSignup] = useState({
-    name: "",
-    id: "",
-    password: "",
-    confirmPassword: "",
+    name: draft.name || "",
+    id: draft.email || "",
+    password: draft.password || "",
+    confirmPassword: draft.password || "",
   });
   const [profile, setProfile] = useState(emptyProfile);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [ocrStatus, setOcrStatus] = useState<string>("이미지 미선택");
+
+  const saveFrontOnlySignup = () => {
+    const payload = {
+      signup,
+      profile,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem("safeBiteSignupComplete", JSON.stringify(payload));
+    navigate("/");
+  };
+
+  const skipDetails = () => {
+    const payload = {
+      signup,
+      profile: emptyProfile,
+      savedAt: new Date().toISOString(),
+      skipped: true,
+    };
+    localStorage.setItem("safeBiteSignupComplete", JSON.stringify(payload));
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -39,11 +68,11 @@ export function SignupDetailFlowPage() {
             <Button
               variant="outline"
               className="border-slate-300"
-              onClick={() => navigate("/")}
+              onClick={skipDetails}
             >
               나중에 입력할게요
             </Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700">
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
               가입 완료
             </Button>
           </div>
@@ -117,7 +146,7 @@ export function SignupDetailFlowPage() {
                 />
 
                 <div className="flex gap-2">
-                  <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700">
+                  <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
                     회원가입
                   </Button>
                   <Button
@@ -140,7 +169,7 @@ export function SignupDetailFlowPage() {
                 <Button
                   variant="ghost"
                   className="w-full text-slate-500"
-                  onClick={() => navigate("/")}
+                  onClick={skipDetails}
                 >
                   나중에 입력할게요 <ChevronRight className="w-4 h-4 ml-1 inline" />
                 </Button>
@@ -154,10 +183,10 @@ export function SignupDetailFlowPage() {
             <SignupAllergySection profile={profile} setProfile={setProfile} />
 
             <div className="flex gap-3 justify-end">
-              <Button variant="outline" className="border-slate-300" onClick={() => navigate("/")}>
+              <Button variant="outline" className="border-slate-300" onClick={skipDetails}>
                 나중에 입력할게요
               </Button>
-              <Button className="bg-emerald-600 hover:bg-emerald-700">
+              <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
                 <Save className="w-4 h-4 mr-1" /> 가입 정보 저장
               </Button>
             </div>
