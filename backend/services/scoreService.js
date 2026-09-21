@@ -10,6 +10,7 @@
  *   - 1형 당뇨      → 규칙 기반 (당류, 탄수화물)
  *   - 신장병        → 규칙 기반 (나트륨, 단백질, GFR 단계별)
  *   - 갑상선        → 미구현 (요오드 데이터 없음, 완전 제외)
+ *   - 무질환        → 규칙 기반 (KDRI 일반인 기준치, 나트륨/당류/포화지방/트랜스지방/지방)
  *
  * 판정 공식 근거: 영국 FoP 가이드라인 (UK DoH/FSA, 2016, Annex 3 Table 2, p.19)
  *   HIGH(비추천) = 질병별 1일 한도 × 25% / 100g 초과
@@ -472,6 +473,46 @@ function evaluateCKD(nutrition, weight, gfr) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 무질환(건강한 사용자) 판정 함수
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 건강한 사용자(무질환) 판정
+ *
+ * 질병 트랙과 동일한 영국 FoP 25%/5% 공식을 사용하고,
+ * 1일 한도 자리에만 질병별 한도 대신 일반인 기준치를 넣는다.
+ *
+ * 근거:
+ *   - 나트륨, 당류: KDRI 2020 (한국인 영양소 섭취기준, 한국영양학회)
+ *   - 포화지방: KDRI 2020 — 1일 섭취열량의 7% 미만 (지방 1g = 9kcal)
+ *   - 트랜스지방: WHO 2023 (Global trans-fat elimination) — 1일 섭취열량의 1% 미만
+ *   - 지방(총지방): KDRI 2020 에너지적정비율 상한 30%
+ *
+ * 영양소 값이 null/undefined면 combineResults에서 자동으로 판정 제외된다.
+ *
+ * @param {object} nutrition - 100g당 영양성분
+ * @param {number} energy    - KDRI 1일 에너지 (kcal)
+ * @param {object} kdri      - KDRI 1일 기준값 객체
+ */
+function evaluateHealthy(nutrition, energy, kdri) {
+  return combineResults([
+    { nutrientName: "나트륨", value: nutrition.sodium, dailyLimit: kdri.나트륨 },
+    { nutrientName: "당류", value: nutrition.sugar, dailyLimit: kdri.당류 },
+    {
+      nutrientName: "포화지방",
+      value: nutrition.saturatedFat,
+      dailyLimit: (energy * 0.07) / 9,
+    },
+    {
+      nutrientName: "트랜스지방",
+      value: nutrition.transFat,
+      dailyLimit: (energy * 0.01) / 9,
+    },
+    { nutrientName: "지방", value: nutrition.fat, dailyLimit: (energy * 0.30) / 9 },
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────
 // 메인 판정 함수
 // ─────────────────────────────────────────────────────────────
 
@@ -583,9 +624,17 @@ async function scoreForDiseaseUser(
 }
 
 /**
- * 건강한 사용자 판정 함수
- * 현재 미구현 → recommend.js에서 차단 중
- * TODO: 추후 구현
+ * 건강한 사용자(무질환)의 음식 적합성 판정
+ *
+ * 반환 객체의 키 구성은 scoreForDiseaseUser와 동일하게 맞춘다.
+ * (ML 트랙이 아니므로 giCategory는 항상 null)
+ *
+ * @param {object} session
+ * @param {string} foodName
+ * @param {number} weight
+ * @param {number} height
+ * @param {number} age
+ * @param {string} gender
  */
 async function scoreForHealthyUser(
   session,
@@ -595,11 +644,27 @@ async function scoreForHealthyUser(
   age,
   gender,
 ) {
-  // TODO
+  const nutrition = await getFoodNutrition(session, foodName);
+  if (!nutrition) return null;
+
+  const bmi = calcBMI(weight, height);
+  const kdri = getDailyReference(gender, age);
+
+  const result = evaluateHealthy(nutrition, kdri.에너지, kdri);
+
+  return {
+    diseaseTrack: "healthy",
+    verdict: result.verdict,
+    giCategory: null,
+    warnings: result.warnings,
+    nutrition,
+    bmi: bmi.toFixed(1),
+  };
 }
 
 module.exports = {
   scoreForDiseaseUser,
   scoreForHealthyUser,
+  evaluateHealthy,
   getDailyReference,
 };
