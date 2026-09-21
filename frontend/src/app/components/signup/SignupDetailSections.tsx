@@ -125,7 +125,7 @@ export function SignupOcrPanel({
             이미지로 OCR
             <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
           </label>
-          <Button variant="outline" size="sm" onClick={runOcrDemo}>
+          <Button variant="outline" size="sm" type="button" onClick={runOcrDemo}>
             <Image className="w-4 h-4 mr-1" /> OCR
           </Button>
         </div>
@@ -230,12 +230,15 @@ export function SignupHealthConditionsSection({
   profile: ProfileFormState;
   setProfile: React.Dispatch<React.SetStateAction<ProfileFormState>>;
 }) {
+  const [diseaseInput, setDiseaseInput] = useState("");
+
   const addDisease = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
     if (!profile.diseases.includes(trimmed)) {
       setProfile((prev) => ({ ...prev, diseases: [...prev.diseases, trimmed] }));
     }
+    setDiseaseInput("");
   };
 
   const removeDisease = (value: string) => {
@@ -256,34 +259,46 @@ export function SignupHealthConditionsSection({
 
       <div className="flex flex-wrap gap-2 min-h-12">
         {profile.diseases.map((disease) => (
-          <Badge key={disease} className="bg-red-100 text-red-700">
-            {disease}
-            <X className="w-3 h-3 ml-2 cursor-pointer" onClick={() => removeDisease(disease)} />
+          <Badge
+            key={disease}
+            className="bg-red-100 text-red-700 hover:bg-red-100 flex items-center gap-1 pr-1"
+          >
+            <span>{disease}</span>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-full p-0.5 hover:bg-red-200 text-red-700 hover:text-red-900 pointer-events-auto cursor-pointer focus:outline-none transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                removeDisease(disease);
+              }}
+              title={`${disease} 삭제`}
+              aria-label={`${disease} 삭제`}
+            >
+              <X className="w-3.5 h-3.5 pointer-events-none" />
+            </button>
           </Badge>
         ))}
       </div>
 
       <div className="flex gap-2 mt-3">
         <Input
-          value={profile.diseases.length}
-          readOnly
-          className="hidden"
-        />
-        <Input
+          id="disease-input"
           placeholder="질환명 입력"
+          value={diseaseInput}
+          onChange={(e) => setDiseaseInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              addDisease((e.target as HTMLInputElement).value);
-              (e.target as HTMLInputElement).value = "";
+              addDisease(diseaseInput);
             }
           }}
         />
-        <Button variant="outline" onClick={() => {
-          const input = document.querySelector<HTMLInputElement>("#disease-input");
-          if (input) addDisease(input.value);
-          input && (input.value = "");
-        }}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => addDisease(diseaseInput)}
+        >
           <Plus className="w-4 h-4" />
         </Button>
       </div>
@@ -390,12 +405,15 @@ export function SignupAllergySection({
   profile: ProfileFormState;
   setProfile: React.Dispatch<React.SetStateAction<ProfileFormState>>;
 }) {
+  const [allergyInput, setAllergyInput] = useState("");
+
   const addAllergy = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
     if (!profile.allergens.includes(trimmed)) {
       setProfile((prev) => ({ ...prev, allergens: [...prev.allergens, trimmed] }));
     }
+    setAllergyInput("");
   };
 
   const removeAllergy = (value: string) => {
@@ -411,9 +429,24 @@ export function SignupAllergySection({
 
       <div className="flex flex-wrap gap-2 min-h-12">
         {profile.allergens.map((allergy) => (
-          <Badge key={allergy} className="bg-amber-100 text-amber-800">
-            {allergy}
-            <X className="w-3 h-3 ml-2 cursor-pointer" onClick={() => removeAllergy(allergy)} />
+          <Badge
+            key={allergy}
+            className="bg-amber-100 text-amber-800 hover:bg-amber-100 flex items-center gap-1 pr-1"
+          >
+            <span>{allergy}</span>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-full p-0.5 hover:bg-amber-200 text-amber-800 hover:text-amber-950 pointer-events-auto cursor-pointer focus:outline-none transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                removeAllergy(allergy);
+              }}
+              title={`${allergy} 삭제`}
+              aria-label={`${allergy} 삭제`}
+            >
+              <X className="w-3.5 h-3.5 pointer-events-none" />
+            </button>
           </Badge>
         ))}
       </div>
@@ -422,19 +455,20 @@ export function SignupAllergySection({
         <Input
           id="allergy-input"
           placeholder="알레르기 입력"
+          value={allergyInput}
+          onChange={(e) => setAllergyInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              addAllergy((e.target as HTMLInputElement).value);
-              (e.target as HTMLInputElement).value = "";
+              addAllergy(allergyInput);
             }
           }}
         />
-        <Button variant="outline" onClick={() => {
-          const input = document.querySelector<HTMLInputElement>("#allergy-input");
-          if (input) addAllergy(input.value);
-          input && (input.value = "");
-        }}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => addAllergy(allergyInput)}
+        >
           <Plus className="w-4 h-4" />
         </Button>
       </div>
