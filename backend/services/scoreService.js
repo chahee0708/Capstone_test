@@ -14,7 +14,7 @@
  *
  * 판정 공식 근거: 영국 FoP 가이드라인 (UK DoH/FSA, 2016, Annex 3 Table 2, p.19)
  *   HIGH(비추천) = 질병별 1일 한도 × 25% / 100g 초과
- *   LOW(추천)   = 질병별 1일 한도 × ~5% / 100g 이하 (EU 1924/2006 근사값)
+ *   LOW(추천)   = 질병별 1일 한도 × 5.6% / 100g 이하 (FoP LOW 기준 평균값)
  *
  * 여러 질병 동시 보유 시: 각 질병별 독립 판정 후 가장 보수적 판정 채택
  */
@@ -203,8 +203,11 @@ function getDailyReference(gender, age) {
 }
 
 /**
- * 영국 FoP 25%/5% 공식으로 임계값 계산
+ * 영국 FoP 25%/5.6% 공식으로 임계값 계산
  * 근거: UK DoH/FSA FoP Guidance (2016), Annex 3 Table 2, p.19
+ *
+ * LOW 계수 5.6%는 같은 가이드라인 LOW 기준의 실제 비율
+ * (지방 4.3%, 포화지방 7.5%, 당류 5.6%, 소금 5.0%)의 평균값이다.
  *
  * @param {number} dailyLimit - 질병별 1일 한도
  * @returns {{ high: number, low: number }}
@@ -212,7 +215,7 @@ function getDailyReference(gender, age) {
 function calcThreshold(dailyLimit) {
   return {
     high: dailyLimit * 0.25, // 1일 한도의 25% 초과 → 비추천
-    low: dailyLimit * 0.05, // 1일 한도의 ~5% 이하 → 추천 (EU 1924/2006 근사값)
+    low: dailyLimit * 0.056, // 1일 한도의 5.6% 이하 → 추천 (FoP LOW 기준 평균값)
   };
 }
 
@@ -479,7 +482,7 @@ function evaluateCKD(nutrition, weight, gfr) {
 /**
  * 건강한 사용자(무질환) 판정
  *
- * 질병 트랙과 동일한 영국 FoP 25%/5% 공식을 사용하고,
+ * 질병 트랙과 동일한 영국 FoP 25%/5.6% 공식을 사용하고,
  * 1일 한도 자리에만 질병별 한도 대신 일반인 기준치를 넣는다.
  *
  * 근거:
