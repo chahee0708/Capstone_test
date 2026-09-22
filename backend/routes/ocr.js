@@ -1,8 +1,11 @@
-require('dotenv').config();
+const path = require('path');
+// 1. 현재 라우터 기준 상위 폴더(backend/.env 또는 프로젝트 루트 .env) 강제 로드
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+require('dotenv').config(); // 기본 경로 fallback
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
 const crypto = require('crypto');
 
 // 프로젝트 내 authMiddleware 실제 경로에 맞게 확인
@@ -13,8 +16,9 @@ const upload = multer({
   limits: { fileSize: 30 * 1024 * 1024 }
 });
 
-const CLOVA_INVOKE_URL = process.env.CLOVA_OCR_APIGW_URL;
-const CLOVA_SECRET_KEY = process.env.CLOVA_OCR_SECRET_KEY;
+// 두 가지 환경변수 네이밍을 모두 지원하도록 안전 처리
+const CLOVA_INVOKE_URL = process.env.CLOVA_INVOKE_URL || process.env.CLOVA_OCR_APIGW_URL;
+const CLOVA_SECRET_KEY = process.env.CLOVA_SECRET_KEY || process.env.CLOVA_OCR_SECRET_KEY;
 
 router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
   try {
@@ -140,7 +144,7 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
       }
     }
 
-    // ── 6. 신장 수치 e-GFR (문미 108 수치 감지) ──
+    // ── 6. 신장 수치 e-GFR ──
     let gfr = null;
     const gfrMatch = fullText.match(/(?:e-?GFR|신사구체여과[을율])[\s\S]{0,100}?([0-9]{2,3})(?!\.[0-9])(?:\s*$|\s+[가-힣A-Z])/i) ||
                      fullText.match(/신장기능\s*이상\s*의심\s*([0-9]{2,3})/i);

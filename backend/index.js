@@ -1,7 +1,5 @@
-// 서버 담당 파일
-// docker-compose.yml에서 환경변수를 이미 직접 넣어주고 있어서
-// dotenv 자체가 필요없음. 일단 주석 처리
-// require("dotenv").config();
+// 환경변수 로드 (.env 파일 읽기)
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
@@ -12,7 +10,15 @@ const ocrRouter = require("./routes/ocr");
 const authMiddleware = require("./middleware/auth");
 
 const app = express();
-app.use(cors());
+
+// CORS 설정: credentials: true와 프론트 주소 허용
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
 app.get("/", (req, res) => {
