@@ -1,21 +1,30 @@
+require('dotenv').config();
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
 
+// 프로젝트 내 authMiddleware 실제 경로에 맞게 확인
+const authMiddleware = require('../middleware/auth');
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 30 * 1024 * 1024 }
 });
 
-const CLOVA_INVOKE_URL = "https://1unkz6kx73.apigw.ntruss.com/custom/v1/53790/bba3cb02c28788a28324152864c7928fc4d9c69c3815cc7919324ca2f81e7001/general";
-const CLOVA_SECRET_KEY = "QUNqZXhDQnhuWENwRHRCRU9MaGd4c1ZIUk14bVlqYnQ=";
+const CLOVA_INVOKE_URL = process.env.CLOVA_OCR_APIGW_URL;
+const CLOVA_SECRET_KEY = process.env.CLOVA_OCR_SECRET_KEY;
 
-router.post('/', upload.single('image'), async (req, res) => {
+router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: '이미지 파일이 전송되지 않았습니다.' });
+    }
+
+    if (!CLOVA_INVOKE_URL || !CLOVA_SECRET_KEY) {
+      console.error('[OCR Backend] 환경변수(CLOVA_INVOKE_URL, CLOVA_SECRET_KEY) 누락');
+      return res.status(500).json({ error: '서버 OCR 설정(환경변수)이 완료되지 않았습니다.' });
     }
 
     const ext = path.extname(req.file.originalname).toLowerCase().replace('.', '');
@@ -88,13 +97,11 @@ router.post('/', upload.single('image'), async (req, res) => {
     let height = null;
     let weight = null;
 
-    // "키 ... 몸무게" 키워드가 직접 동반된 경우에만 슬래시 파싱
     const hwMatch = fullText.match(/(?:키.*?몸무게|신장.*?체중)[\s\S]{0,40}?([0-9]{2,3}(?:\.[0-9])?)\s*[\/]\s*([0-9]{2,3}(?:\.[0-9])?)/i);
     if (hwMatch) {
       height = parseFloat(hwMatch[1]);
       weight = parseFloat(hwMatch[2]);
     } else {
-      // 키/몸무게 행이 없거나 슬래시가 혈압 수치와 겹치지 않는 경우 단독 추출
       const hOnly = fullText.match(/(?:신장|키)\s*\(?cm\)?\s*[:：]?\s*(1[4-9][0-9](?:\.[0-9])?|20[0-9](?:\.[0-9])?)/i);
       if (hOnly) height = parseFloat(hOnly[1]);
 
@@ -108,19 +115,16 @@ router.post('/', upload.single('image'), async (req, res) => {
     let tg = null;
 
     if (!fullText.includes("비해당 비해당 비해당 비해당")) {
-      // 1) 당뇨 뒤편에 밀려난 수치군: "유질환자 당뇨병 의심 253 58 이상지질혈증" -> HDL: 58
       const preLipidHdl = fullText.match(/의심\s+(?:[0-9]{2,3})\s+([3-9][0-9])\s+이상지질혈증/);
       if (preLipidHdl) {
         hdl = parseFloat(preLipidHdl[1]);
       }
 
-      // 2) 이상지질 섹션 하단에 밀려난 수치군: "유질환자 136 168 혈액검사" -> TG: 136, LDL: 168
       const postLipidPair = fullText.match(/(?:유질환자|이상\s*의심)\s+([0-9]{2,3})\s+([0-9]{2,3})\s+(?:혈액검사|혈청|신장)/);
       if (postLipidPair) {
         tg = parseFloat(postLipidPair[1]);
         ldl = parseFloat(postLipidPair[2]);
       } else {
-        // 일반 레이아웃 파싱
         if (!ldl) {
           const ldlMatch = fullText.match(/(?:저밀도|LDL)[^\d]{0,25}([0-9]{2,3})(?!\s*미만)/i);
           if (ldlMatch) ldl = parseFloat(ldlMatch[1]);
@@ -161,7 +165,7 @@ router.post('/', upload.single('image'), async (req, res) => {
       suggestedDiseases.push("2형 당뇨");
     }
 
-    // [이상지질혈증] (LDL 168은 130 이상으로 의심 판정)
+    // [이상지질혈증]
     const isLipidAbnormal = (tg && tg >= 150) || (ldl && ldl >= 130) || (hdl && hdl < 40);
     const hasLipidChecked = fullText.includes("■ 고중성지방") || fullText.includes("■ 고콜레스테롤") || fullText.includes("■ 낮은 HDL");
     if (isLipidAbnormal || hasLipidChecked) {

@@ -7,7 +7,7 @@
  *     - 고혈압 → Stage I / Stage II 라디오
  *     - 이상지질혈증 → LDL, 중성지방(TG), HDL 수치(mg/dL) 3가지 입력 필드
  *     - 신장병 → GFR 수치 숫자 입력
- *   - 건강검진표 사진 기반 OCR 자동 채우기 기능 연동
+ *   - 건강검진표 사진 기반 OCR 자동 채우기 기능 연동 (credentials: "include" 적용)
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -81,6 +81,7 @@ export function ProfilePage() {
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
     fetch(`${API_URL}/users/${USER_ID}`, {
+      credentials: "include",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then((res) => res.json())
@@ -105,7 +106,7 @@ export function ProfilePage() {
         toast.error("프로필 불러오기 실패");
         setIsLoading(false);
       });
-  }, []);
+  }, [USER_ID, token]);
 
   // ── 건강검진표 OCR 자동 입력 처리 ─────────────────────────
   const handleOcrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -121,6 +122,7 @@ export function ProfilePage() {
     try {
       const res = await fetch(`${API_URL}/ocr`, {
         method: "POST",
+        credentials: "include", // 세션/인증 쿠키 전달 추가
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
@@ -131,7 +133,6 @@ export function ProfilePage() {
       const extracted = data.extractedData || {};
 
       setProfile((prev) => {
-        // 검진표에서 실제로 이상/의심으로 판정된 질환 목록만 설정
         const detectedDiseases = Array.isArray(extracted.suggestedDiseases)
           ? extracted.suggestedDiseases
           : [];
@@ -149,7 +150,6 @@ export function ProfilePage() {
           weight: extracted.weight ?? prev.weight,
           diseases: detectedDiseases,
           hypertension_stage: hasHypertension ? (extracted.hypertensionStage ?? 1) : 1,
-          // 이상지질혈증 3대 수치 (LDL, TG, HDL) 자동 채우기
           ldl_value: hasDyslipidemia ? (extracted.ldl ?? prev.ldl_value) : null,
           tg_value:  hasDyslipidemia ? (extracted.tg  ?? prev.tg_value)  : null,
           hdl_value: hasDyslipidemia ? (extracted.hdl ?? prev.hdl_value) : null,
@@ -171,6 +171,7 @@ export function ProfilePage() {
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
