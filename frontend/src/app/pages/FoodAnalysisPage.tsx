@@ -54,7 +54,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 type AnalysisResult = {
   productName: string;
   userType: string;
-  diseaseTrack: "diabetes" | "rule";
+  diseaseTrack: "diabetes" | "rule" | "healthy";
   verdict: "추천" | "주의" | "비추천";
   giCategory: "Low" | "Medium" | "High" | null;
   bmi: string;

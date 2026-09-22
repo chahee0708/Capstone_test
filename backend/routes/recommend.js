@@ -7,8 +7,8 @@
  *   1. 요청에서 foodName, userId 추출
  *   2. MySQL에서 사용자 정보 조회
  *      (diseases, allergens, 신체정보, 성별, 질병 심각도 컬럼 포함)
- *   3. 질병 있음 → scoreService로 판정
- *      질병 없음 → 차단 메시지 반환
+ *   3. 질병 있음 → scoreForDiseaseUser로 판정
+ *      질병 없음 → scoreForHealthyUser로 판정 (KDRI 일반인 기준치)
  *   4. 알레르기 있는 유저만 allergyService 호출
  *   5. 최종 JSON 응답 (dailyReference 포함)
  */
@@ -66,35 +66,40 @@ router.post("/", async (req, res) => {
 
     const hasDiseases = diseases.length > 0;
 
-    // ── Step 2. 건강한 사용자 → 현재 차단 ───────────────────
-    if (!hasDiseases) {
-      return res.status(200).json({
-        message:
-          "현재 질환 보유자 대상 서비스입니다. 건강 관리 기능은 준비 중입니다.",
-      });
+    // ── Step 2~4. scoreService로 판정 ─────────────────────────
+    let result;
+
+    if (hasDiseases) {
+      // 질병 심각도 정보 묶음 → scoreService로 한꺼번에 전달
+      const diseaseDetails = {
+        hypertension_stage: user.hypertension_stage || 1,
+        ldl_value: user.ldl_value ?? null,
+        tg_value:  user.tg_value  ?? null,
+        hdl_value: user.hdl_value ?? null,
+        gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
+      };
+
+      result = await scoreForDiseaseUser(
+        session,
+        foodName,
+        diseases,
+        user.weight,
+        user.height,
+        user.age,
+        user.gender,
+        diseaseDetails,
+      );
+    } else {
+      // 무질환 사용자 → KDRI 일반인 기준치로 판정
+      result = await scoreForHealthyUser(
+        session,
+        foodName,
+        user.weight,
+        user.height,
+        user.age,
+        user.gender,
+      );
     }
-
-    // ── Step 3. 질병 심각도 정보 묶음 ─────────────────────────
-    // scoreService로 한꺼번에 전달
-    const diseaseDetails = {
-      hypertension_stage: user.hypertension_stage || 1,
-      ldl_value: user.ldl_value ?? null,
-      tg_value:  user.tg_value  ?? null,
-      hdl_value: user.hdl_value ?? null,
-      gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
-    };
-
-    // ── Step 4. scoreService로 판정 ───────────────────────────
-    const result = await scoreForDiseaseUser(
-      session,
-      foodName,
-      diseases,
-      user.weight,
-      user.height,
-      user.age,
-      user.gender,
-      diseaseDetails,
-    );
 
     if (!result) {
       return res.status(404).json({ message: "음식을 찾을 수 없습니다." });
@@ -112,8 +117,8 @@ router.post("/", async (req, res) => {
     // ── Step 7. 최종 응답 ──────────────────────────────────────
     res.json({
       productName: foodName,
-      userType: "disease",
-      diseaseTrack: result.diseaseTrack, // "diabetes" | "rule"
+      userType: hasDiseases ? "disease" : "healthy",
+      diseaseTrack: result.diseaseTrack, // "diabetes" | "rule" | "healthy"
       verdict: result.verdict, // "추천" | "주의" | "비추천"
       giCategory: result.giCategory, // ML 트랙: "Low"|"Medium"|"High", 규칙: null
       bmi: result.bmi,
