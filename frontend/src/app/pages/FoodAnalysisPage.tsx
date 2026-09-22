@@ -7,9 +7,22 @@
  *   1. 판정 카드 (추천/주의/비추천)
  *      - 2형 당뇨 사용자: GI 지수 정보 포함
  *      - 다른 질병 사용자: 판정 라벨만 표시
- *   2. 주의 영양소 목록 (warnings 배열이 있을 때만)
- *   3. 영양 성분 분석 차트 (max값이 KDRI 기준값으로 표시됨)
- *   4. 알레르기 유발 성분 카드
+ *   2. 판정 근거 줄글 (VerdictExplanation 컴포넌트)
+ *   3. 영양소 균형 — 방사형 그래프 (NutrientRadarChart 컴포넌트)
+ *   4. 영양 성분 분석 — 가로 막대 (KDRI 일반 성인 기준)
+ *   5. 알레르기 유발 성분 카드
+ *
+ * ── 이번 변경 요약 ───────────────────────────────────────────
+ * STEP 2: 세로 막대 그래프(recharts BarChart)를 NutrientRadarChart로 교체.
+ *         가로 막대(Progress)는 그대로 유지.
+ * STEP 3: 가로 막대 오른쪽 표기를 "60g / 422g (14%)" 형태로 변경.
+ *         포화지방 max값 20g 하드코딩 제거 → 에너지 × 7% ÷ 9 로 계산.
+ * STEP 4: 노란 "주의 영양소" 박스 제거 → VerdictExplanation(줄글)로 교체.
+ *         warnings 필드는 응답에 그대로 남아 있지만 화면에서는 쓰지 않는다.
+ *
+ * 호출하는 컴포넌트:
+ *   - frontend/src/components/NutrientRadarChart.tsx
+ *   - frontend/src/components/VerdictExplanation.tsx
  */
 
 import { useState } from "react";
@@ -34,16 +47,17 @@ import {
 } from "../components/ui/tabs";
 import { Progress } from "../components/ui/progress";
 import { Badge } from "../components/ui/badge";
+// 세로 막대 그래프를 방사형 그래프로 교체했기 때문에 recharts를 여기서 직접 쓰지 않는다
+// (차트 관련 import는 NutrientRadarChart.tsx 안으로 옮겨졌다)
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+  NutrientRadarChart,
+  type RadarAxis,
+} from "../../components/NutrientRadarChart";
+import {
+  VerdictExplanation,
+  type Reason,
+  type CarbInfo,
+} from "../../components/VerdictExplanation";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -63,14 +77,25 @@ type AnalysisResult = {
     sodium: number;
     saturatedFat: number;
     protein: number;
+    carbohydrate: number;
+    calories: number;
   };
+  // 구버전 호환용으로 응답에는 남아 있지만 화면에서는 더 이상 쓰지 않는다
   warnings: string[];
+  // 판정 근거 줄글용 (VerdictExplanation)
+  reasons: Reason[];
+  // 방사형 그래프 6축 (NutrientRadarChart)
+  radar: RadarAxis[];
+  // 1형 당뇨 사용자에게만 값이 들어온다. 그 외에는 null
+  carbInfo: CarbInfo | null;
   allergenAlert: string[];
   // 성별+나이 기반 KDRI 1일 기준값 (프론트 차트 max값으로 사용)
   // 예: 남성 25세 → { 나트륨: 2300, 당류: 130, 탄수화물: 130, 단백질: 65, 식이섬유: 30 }
   dailyReference: {
+    에너지: number;
     나트륨: number;
     당류: number;
+    // STEP 1-3 이후: KDRI 권장섭취량 130g이 아니라 에너지 × 65% ÷ 4 로 계산된 값이 들어온다
     탄수화물: number;
     단백질: number;
     식이섬유: number;
@@ -162,23 +187,55 @@ export function FoodAnalysisPage() {
   };
 
   /**
-   * 영양 성분 차트 데이터 생성
-   * max값을 KDRI dailyReference에서 가져옴 (하드코딩 제거)
+   * [STEP 3] 가로 막대(Progress) 데이터 생성
    *
-   * 예: 남성 25세라면
-   *   당류   max: 130g  (이전: 25g 하드코딩)
-   *   나트륨 max: 2300mg (이전: 2000mg 하드코딩)
-   *   단백질 max: 65g   (이전: 20g 하드코딩)
+   * 기준: 한국인 영양소 섭취기준(KDRI), 일반 성인 1일 권장량
+   *       → 질병 한도가 아니라 "일반 성인이라면 하루에 이만큼"이라는 값이다.
+   *         질병 기준으로 보는 그래프는 위쪽 방사형 그래프가 담당한다.
+   *
+   * 변경 내용:
+   *   - 포화지방 max: 20g 하드코딩 제거 → 에너지 × 7% ÷ 9 로 계산
+   *     (KDRI 테이블에 포화지방 항목이 없어서, 백엔드 evaluateHealthy와 똑같은 식을 쓴다.
+   *      포화지방 1g = 9kcal 이므로 9로 나눈다)
+   *   - 탄수화물 막대 추가: dailyReference.탄수화물은 이제 에너지 × 65% ÷ 4 값이다
+   *   - unit을 항목마다 들고 다녀서 "나트륨만 mg" 같은 조건문을 없앴다
    */
   const getNutritionData = (
     nutrition: AnalysisResult["nutrition"],
     dailyReference: AnalysisResult["dailyReference"],
-  ) => [
-    { name: "당류", value: nutrition.sugar, max: dailyReference.당류 },
-    { name: "나트륨", value: nutrition.sodium, max: dailyReference.나트륨 },
-    { name: "포화지방", value: nutrition.saturatedFat, max: 20 }, // KDRI에 포화지방 없음 → 임시 고정값
-    { name: "단백질", value: nutrition.protein, max: dailyReference.단백질 },
-  ];
+  ) => {
+    // 포화지방 1일 기준(g) = 1일 에너지의 7% ÷ 9kcal
+    const saturatedFatMax =
+      Math.round(((dailyReference.에너지 * 0.07) / 9) * 10) / 10;
+
+    return [
+      {
+        name: "탄수화물",
+        value: nutrition.carbohydrate,
+        max: dailyReference.탄수화물,
+        unit: "g",
+      },
+      { name: "당류", value: nutrition.sugar, max: dailyReference.당류, unit: "g" },
+      {
+        name: "나트륨",
+        value: nutrition.sodium,
+        max: dailyReference.나트륨,
+        unit: "mg",
+      },
+      {
+        name: "포화지방",
+        value: nutrition.saturatedFat,
+        max: saturatedFatMax,
+        unit: "g",
+      },
+      {
+        name: "단백질",
+        value: nutrition.protein,
+        max: dailyReference.단백질,
+        unit: "g",
+      },
+    ];
+  };
 
   return (
     <div className="min-h-full bg-gray-50 py-8">
@@ -256,12 +313,6 @@ export function FoodAnalysisPage() {
               analysisResult.nutrition,
               analysisResult.dailyReference,
             );
-            const chartData = nutritionData.map((item) => ({
-              name: item.name,
-              value: (item.value / item.max) * 100,
-              rawValue: item.value,
-              max: item.max,
-            }));
 
             const giConfig = analysisResult.giCategory
               ? GI_CONFIG[analysisResult.giCategory]
@@ -336,97 +387,69 @@ export function FoodAnalysisPage() {
                   </Card>
                 )}
 
-                {/* ── 카드 2: 주의 영양소 목록 ── */}
-                {analysisResult.warnings.length > 0 && (
-                  <Card className="p-6">
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <AlertTriangle className="w-5 h-5 text-amber-600" />
-                      주의 영양소
-                    </h3>
-                    <ul className="space-y-2">
-                      {analysisResult.warnings.map((w, i) => (
-                        <li
-                          key={i}
-                          className="text-sm text-amber-700 bg-amber-50 rounded-lg px-3 py-2"
-                        >
-                          {w}
-                        </li>
-                      ))}
-                    </ul>
-                  </Card>
-                )}
+                {/* ── 카드 2: 판정 근거 (줄글) ──
+                    기존 노란 "주의 영양소" 리스트를 없애고 근거 문단으로 교체했다.
+                    analysisResult.warnings는 응답에 그대로 남아 있지만 화면에는 쓰지 않는다. */}
+                <Card className="p-6">
+                  <VerdictExplanation
+                    reasons={analysisResult.reasons ?? []}
+                    carbInfo={analysisResult.carbInfo}
+                  />
+                </Card>
 
-                {/* ── 카드 3: 영양 성분 분석 ── */}
+                {/* ── 카드 3: 영양소 균형 (방사형 그래프) ──
+                    기존 세로 막대 그래프 자리를 대체한다 */}
+                <Card className="p-6">
+                  <NutrientRadarChart
+                    data={analysisResult.radar ?? []}
+                    calories={analysisResult.nutrition.calories}
+                    isMlTrack={analysisResult.diseaseTrack === "diabetes"}
+                  />
+                </Card>
+
+                {/* ── 카드 4: 영양 성분 분석 (가로 막대, 일반 기준) ── */}
                 <Card className="p-6">
                   <h3 className="font-semibold mb-1 flex items-center gap-2">
                     <TrendingUp className="w-5 h-5 text-emerald-600" />
                     영양 성분 분석
                   </h3>
-                  {/* 기준값 출처 표시 */}
+                  {/* 기준값 출처 표시 — 위 방사형 그래프(내 질병 기준)와 구분되도록 명시 */}
                   <p className="text-xs text-gray-400 mb-4">
-                    기준: 한국인 영양소 섭취기준(KDRI) 1일 권장량
+                    기준: 한국인 영양소 섭취기준(KDRI), 일반 성인 1일 권장량
                   </p>
-                  <div className="space-y-4 mb-6">
-                    {nutritionData.map((item, index) => (
-                      <div key={index}>
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="text-sm font-medium">
-                            {item.name}
-                          </span>
-                          <span className="text-sm text-gray-600">
-                            {item.value} / {item.max}
-                            {item.name === "나트륨" ? "mg" : "g"}
-                          </span>
-                        </div>
-                        <Progress
-                          value={(item.value / item.max) * 100}
-                          className="h-2"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  {/* 막대 차트: 기준 대비 % */}
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            const d = payload[0].payload;
-                            return (
-                              <div className="bg-white p-3 border rounded-lg shadow-lg">
-                                <p className="font-semibold">{d.name}</p>
-                                <p className="text-sm text-gray-600">
-                                  {d.rawValue} / {d.max} ({Math.round(d.value)}
-                                  %)
-                                </p>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                      />
-                      <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                        {chartData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={
-                              entry.value > 20
-                                ? "#ef4444" // 20%DV 초과 → 빨간색
-                                : entry.value > 5
-                                  ? "#f59e0b" // 5%DV 초과  → 노란색
-                                  : "#10b981" // 5%DV 이하  → 초록색
-                            }
+                  <div className="space-y-4">
+                    {nutritionData.map((item, index) => {
+                      // 100g 섭취 시 1일 권장량의 몇 %인지
+                      const percent = Math.round((item.value / item.max) * 100);
+                      return (
+                        <div key={index}>
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm font-medium">
+                              {item.name}
+                            </span>
+                            {/* g과 % 를 함께 표기: 예) 60g / 422g (14%) */}
+                            <span className="text-sm text-gray-600">
+                              {item.value}
+                              {item.unit} / {item.max}
+                              {item.unit} ({percent}%)
+                            </span>
+                          </div>
+                          {/* Progress는 100을 넘으면 꽉 찬 상태로 보이므로 값을 100에서 자른다 */}
+                          <Progress
+                            value={Math.min(percent, 100)}
+                            className="h-2"
                           />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-4">
+                    괄호 안 %는 이 제품을 100g 섭취했을 때 1일 권장량 대비
+                    비율입니다.
+                  </p>
                 </Card>
 
-                {/* ── 카드 4: 알레르기 유발 성분 ── */}
+                {/* ── 카드 5: 알레르기 유발 성분 ── */}
                 {analysisResult.allergenAlert !== null &&
                   analysisResult.allergenAlert !== undefined && (
                     <Card className="p-6">

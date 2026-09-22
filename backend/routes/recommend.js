@@ -11,6 +11,12 @@
  *      질병 없음 → scoreForHealthyUser로 판정 (KDRI 일반인 기준치)
  *   4. 알레르기 있는 유저만 allergyService 호출
  *   5. 최종 JSON 응답 (dailyReference 포함)
+ *
+ * ── 이번 변경(STEP 1) ────────────────────────────────────────
+ *   - 응답에 radar(방사형 그래프용), reasons(판정 근거 줄글용), carbInfo(1형 당뇨용) 추가
+ *   - dailyReference를 getDailyReference → getDisplayDailyReference로 교체
+ *     (탄수화물 기준만 130g → 에너지×65%÷4 로 바뀐다. 판정값은 그대로)
+ *   - 기존 warnings 필드는 호환성을 위해 그대로 유지 (화면에서는 더 이상 쓰지 않음)
  */
 
 const express = require("express");
@@ -21,7 +27,7 @@ const { getSession } = require("../db/neo4j");
 const {
   scoreForDiseaseUser,
   scoreForHealthyUser,
-  getDailyReference,
+  getDisplayDailyReference,
 } = require("../services/scoreService");
 const { checkAllergens } = require("../services/allergyService");
 
@@ -111,8 +117,9 @@ router.post("/", async (req, res) => {
         ? await checkAllergens(session, foodName, allergens)
         : [];
 
-    // ── Step 6. KDRI 1일 기준값 → 프론트 차트 max값에 사용 ────
-    const dailyReference = getDailyReference(user.gender, user.age);
+    // ── Step 6. KDRI 1일 기준값 → 프론트 가로 막대 차트 max값에 사용 ────
+    // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
+    const dailyReference = getDisplayDailyReference(user.gender, user.age);
 
     // ── Step 7. 최종 응답 ──────────────────────────────────────
     res.json({
@@ -123,7 +130,10 @@ router.post("/", async (req, res) => {
       giCategory: result.giCategory, // ML 트랙: "Low"|"Medium"|"High", 규칙: null
       bmi: result.bmi,
       nutrition: result.nutrition,
-      warnings: result.warnings,
+      warnings: result.warnings, // 호환성 유지용 (화면에서는 reasons를 대신 사용)
+      reasons: result.reasons, // 판정 근거 줄글용 (VerdictExplanation.tsx)
+      radar: result.radar, // 방사형 그래프용 6축 (NutrientRadarChart.tsx)
+      carbInfo: result.carbInfo, // 1형 당뇨 사용자에게만 값이 들어옴
       allergenAlert: foundAllergens,
       dailyReference,
     });
