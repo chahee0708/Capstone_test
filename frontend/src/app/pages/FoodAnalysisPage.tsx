@@ -24,8 +24,7 @@
  *   - frontend/src/components/NutrientRadarChart.tsx
  *   - frontend/src/components/VerdictExplanation.tsx
  */
-
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import {
   Search,
@@ -149,6 +148,38 @@ export function FoodAnalysisPage() {
   );
   const [errorMessage, setErrorMessage] = useState("");
 
+  // ── 자동완성: 입력한 글자가 들어간 제품명 후보 ──────────────
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  // 글자를 칠 때마다 요청하지 않도록 0.3초 기다리는 타이머
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 입력칸 글자가 바뀔 때: 0.3초 뒤 후보 목록 요청 */
+  const handleQueryChange = (value: string) => {
+    setSearchQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!value.trim()) {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${API_URL}/recommend/search?q=${encodeURIComponent(value.trim())}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        setSuggestions(res.ok ? await res.json() : []);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+  };
+
+  /** 후보를 클릭했을 때: 입력칸에만 채우고 목록 닫기 (분석은 직접 누름) */
+  const handleSelectSuggestion = (name: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSearchQuery(name);
+    setSuggestions([]);
+  };
   /**
    * 분석 버튼 클릭 또는 Enter 입력 시 실행
    */
@@ -157,6 +188,7 @@ export function FoodAnalysisPage() {
     setIsAnalyzing(true);
     setShowResults(false);
     setErrorMessage("");
+    setSuggestions([]); // 분석 시작하면 후보 목록 닫기
 
     try {
       const response = await fetch(`${API_URL}/recommend`, {
@@ -184,57 +216,6 @@ export function FoodAnalysisPage() {
     } finally {
       setIsAnalyzing(false);
     }
-  };
-
-  /**
-   * [STEP 3] 가로 막대(Progress) 데이터 생성
-   *
-   * 기준: 한국인 영양소 섭취기준(KDRI), 일반 성인 1일 권장량
-   *       → 질병 한도가 아니라 "일반 성인이라면 하루에 이만큼"이라는 값이다.
-   *         질병 기준으로 보는 그래프는 위쪽 방사형 그래프가 담당한다.
-   *
-   * 변경 내용:
-   *   - 포화지방 max: 20g 하드코딩 제거 → 에너지 × 7% ÷ 9 로 계산
-   *     (KDRI 테이블에 포화지방 항목이 없어서, 백엔드 evaluateHealthy와 똑같은 식을 쓴다.
-   *      포화지방 1g = 9kcal 이므로 9로 나눈다)
-   *   - 탄수화물 막대 추가: dailyReference.탄수화물은 이제 에너지 × 65% ÷ 4 값이다
-   *   - unit을 항목마다 들고 다녀서 "나트륨만 mg" 같은 조건문을 없앴다
-   */
-  const getNutritionData = (
-    nutrition: AnalysisResult["nutrition"],
-    dailyReference: AnalysisResult["dailyReference"],
-  ) => {
-    // 포화지방 1일 기준(g) = 1일 에너지의 7% ÷ 9kcal
-    const saturatedFatMax =
-      Math.round(((dailyReference.에너지 * 0.07) / 9) * 10) / 10;
-
-    return [
-      {
-        name: "탄수화물",
-        value: nutrition.carbohydrate,
-        max: dailyReference.탄수화물,
-        unit: "g",
-      },
-      { name: "당류", value: nutrition.sugar, max: dailyReference.당류, unit: "g" },
-      {
-        name: "나트륨",
-        value: nutrition.sodium,
-        max: dailyReference.나트륨,
-        unit: "mg",
-      },
-      {
-        name: "포화지방",
-        value: nutrition.saturatedFat,
-        max: saturatedFatMax,
-        unit: "g",
-      },
-      {
-        name: "단백질",
-        value: nutrition.protein,
-        max: dailyReference.단백질,
-        unit: "g",
-      },
-    ];
   };
 
   return (
@@ -266,12 +247,35 @@ export function FoodAnalysisPage() {
           <TabsContent value="search" className="space-y-4">
             <Card className="p-6">
               <div className="flex gap-2">
-                <Input
-                  placeholder="제품명을 입력하세요 (예: 불닭볶음면)"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleAnalyze()}
-                />
+                <div className="relative flex-1">
+                  <Input
+                    placeholder="제품명을 입력하세요 (예: 불닭볶음면)"
+                    value={searchQuery}
+                    onChange={(e) => handleQueryChange(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleAnalyze()}
+                    onBlur={() => setSuggestions([])}
+                  />
+                  {/* 자동완성 후보 목록 */}
+                  {suggestions.length > 0 && (
+                    <ul className="absolute left-0 right-0 top-full mt-1 z-20 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {suggestions.map((name) => (
+                        <li key={name}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                            // onClick 대신 onMouseDown: 입력칸 onBlur보다 먼저 실행되게
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              handleSelectSuggestion(name);
+                            }}
+                          >
+                            {name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <Button
                   onClick={handleAnalyze}
                   disabled={isAnalyzing}
@@ -309,10 +313,13 @@ export function FoodAnalysisPage() {
         {showResults &&
           analysisResult &&
           (() => {
-            const nutritionData = getNutritionData(
-              analysisResult.nutrition,
-              analysisResult.dailyReference,
-            );
+            // 영양 성분 목록도 레이더 그래프와 같은 기준(백엔드 radar)을 사용한다
+            const nutritionData = (analysisResult.radar ?? []).map((d) => ({
+              name: d.nutrient,
+              value: d.amountPer100g,
+              max: d.dailyLimit,
+              unit: d.unit,
+            }));
 
             const giConfig = analysisResult.giCategory
               ? GI_CONFIG[analysisResult.giCategory]
@@ -343,6 +350,13 @@ export function FoodAnalysisPage() {
                               {giConfig.label} — {giConfig.desc}
                             </p>
                           </div>
+                        </div>
+                        {/* 판정 근거를 판정 카드 안에 함께 표시 */}
+                        <div className="mt-2 pt-4 border-t border-black/10">
+                          <VerdictExplanation
+                            reasons={analysisResult.reasons ?? []}
+                            carbInfo={analysisResult.carbInfo}
+                          />
                         </div>
                       </Card>
                     );
@@ -384,18 +398,15 @@ export function FoodAnalysisPage() {
                         </h2>
                       </div>
                     </div>
+                    {/* 판정 근거를 판정 카드 안에 함께 표시 */}
+                    <div className="mt-2 pt-4 border-t border-black/10">
+                      <VerdictExplanation
+                        reasons={analysisResult.reasons ?? []}
+                        carbInfo={analysisResult.carbInfo}
+                      />
+                    </div>
                   </Card>
                 )}
-
-                {/* ── 카드 2: 판정 근거 (줄글) ──
-                    기존 노란 "주의 영양소" 리스트를 없애고 근거 문단으로 교체했다.
-                    analysisResult.warnings는 응답에 그대로 남아 있지만 화면에는 쓰지 않는다. */}
-                <Card className="p-6">
-                  <VerdictExplanation
-                    reasons={analysisResult.reasons ?? []}
-                    carbInfo={analysisResult.carbInfo}
-                  />
-                </Card>
 
                 {/* ── 카드 3: 영양소 균형 (방사형 그래프) ──
                     기존 세로 막대 그래프 자리를 대체한다 */}
@@ -415,7 +426,8 @@ export function FoodAnalysisPage() {
                   </h3>
                   {/* 기준값 출처 표시 — 위 방사형 그래프(내 질병 기준)와 구분되도록 명시 */}
                   <p className="text-xs text-gray-400 mb-4">
-                    기준: 한국인 영양소 섭취기준(KDRI), 일반 성인 1일 권장량
+                    기준: 내 건강 정보에 따른 1일 한도 (질병 기준이 없는
+                    영양소는 KDRI)
                   </p>
                   <div className="space-y-4">
                     {nutritionData.map((item, index) => {
@@ -444,7 +456,7 @@ export function FoodAnalysisPage() {
                     })}
                   </div>
                   <p className="text-xs text-gray-400 mt-4">
-                    괄호 안 %는 이 제품을 100g 섭취했을 때 1일 권장량 대비
+                    괄호 안 %는 이 제품을 100g 섭취했을 때 1일 한도 대비
                     비율입니다.
                   </p>
                 </Card>

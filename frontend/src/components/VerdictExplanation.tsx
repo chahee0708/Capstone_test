@@ -132,6 +132,20 @@ export function VerdictExplanation({ reasons, carbInfo }: Props) {
     }
     g.items.push(r);
   }
+  // 무질환 사용자(disease가 null)는 가장 심각한 영양소 1개만 보여준다
+  //   1순위: 비추천이 주의보다 먼저 / 2순위: 기준 대비 배수가 큰 것
+  const ratio = (r: Reason) =>
+    (r.amountPer100g ?? 0) / (r.thresholdPer100g || 1);
+  for (const g of groups) {
+    if (g.disease !== null) continue;
+    g.items = [...g.items]
+      .sort(
+        (a, b) =>
+          (b.verdict === "비추천" ? 1 : 0) - (a.verdict === "비추천" ? 1 : 0) ||
+          ratio(b) - ratio(a),
+      )
+      .slice(0, 1);
+  }
 
   return (
     <div>
@@ -157,14 +171,7 @@ export function VerdictExplanation({ reasons, carbInfo }: Props) {
               }.`;
 
           return (
-            <div
-              key={g.key}
-              className={`rounded-lg p-4 border ${
-                worst === "비추천"
-                  ? "bg-red-50 border-red-200"
-                  : "bg-amber-50 border-amber-200"
-              }`}
-            >
+            <div key={g.key} className="">
               {/* ① 결론 */}
               <p
                 className={`text-sm font-semibold mb-2 ${
@@ -225,8 +232,7 @@ function buildRuleSentences(r: Reason): string {
 
   // 단위 뒤 조사는 읽는 소리 기준으로 정한다.
   // "g"는 "그램", "mg"는 "밀리그램"으로 읽고 둘 다 받침(ㅁ)으로 끝나므로 항상 "을"이다.
-  const sentence2 =
-    `${prefix}100g당 ${josa(nutrient, "이", "가")} ${threshold}${unit}을 ${advice}${sourceText}.`;
+  const sentence2 = `${prefix}100g당 ${josa(nutrient, "이", "가")} ${threshold}${unit}을 ${advice}${sourceText}.`;
 
   const sentence3 = `이 제품은 100g당 ${josa(
     nutrient,

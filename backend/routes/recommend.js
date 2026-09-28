@@ -66,7 +66,7 @@ router.post("/", async (req, res) => {
     console.log("diseases:", diseases);
     console.log("hypertension_stage:", user.hypertension_stage);
     console.log("ldl_value:", user.ldl_value);
-    console.log("tg_value:",  user.tg_value);
+    console.log("tg_value:", user.tg_value);
     console.log("hdl_value:", user.hdl_value);
     console.log("gfr_value:", user.gfr_value);
 
@@ -80,7 +80,7 @@ router.post("/", async (req, res) => {
       const diseaseDetails = {
         hypertension_stage: user.hypertension_stage || 1,
         ldl_value: user.ldl_value ?? null,
-        tg_value:  user.tg_value  ?? null,
+        tg_value: user.tg_value ?? null,
         hdl_value: user.hdl_value ?? null,
         gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
       };
@@ -140,6 +140,30 @@ router.post("/", async (req, res) => {
   } catch (err) {
     console.error("서버 오류:", err);
     res.status(500).json({ message: "서버 오류", error: err.message });
+  } finally {
+    await session.close();
+  }
+});
+
+// ── GET /recommend/search?q=초코 ─────────────────────────────
+// 제품명에 입력한 글자가 들어간 음식 이름을 최대 10개 반환 (자동완성용)
+router.get("/search", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (!q) return res.json([]);
+
+  const session = getSession();
+  try {
+    const result = await session.run(
+      `MATCH (f:Food) WHERE f.name CONTAINS $q
+       RETURN f.name AS name
+       ORDER BY size(f.name) ASC
+       LIMIT 10`,
+      { q },
+    );
+    res.json(result.records.map((r) => r.get("name")));
+  } catch (err) {
+    console.error("검색 오류:", err);
+    res.status(500).json({ message: "검색 오류", error: err.message });
   } finally {
     await session.close();
   }
