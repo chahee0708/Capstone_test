@@ -5,7 +5,7 @@ import { Card } from "../components/ui/card";
 
 export function HomePage() {
   const features = [
-    {
+    {//바코드 삭제 -. 
       icon: ScanBarcode,
       title: "바코드 스캔",
       description: "제품 바코드를 스캔하여 즉시 분석",

@@ -9,7 +9,7 @@
  *      - 다른 질병 사용자: 판정 라벨만 표시
  *   2. 판정 근거 줄글 (VerdictExplanation 컴포넌트)
  *   3. 영양소 균형 — 방사형 그래프 (NutrientRadarChart 컴포넌트)
- *   4. 영양 성분 분석 — 가로 막대 (KDRI 일반 성인 기준)
+ *   4. 영양 성분 분석 — 가로 막대 (KDRI 일반 성인 기준)-> 방사형 그래프와 일치하게 수정
  *   5. 알레르기 유발 성분 카드
  *
  * ── 이번 변경 요약 ───────────────────────────────────────────
@@ -58,7 +58,7 @@ import {
   type CarbInfo,
 } from "../../components/VerdictExplanation";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";//백엔드 로컬호스트 값
 
 /**
  * 백엔드 /recommend 응답 타입
