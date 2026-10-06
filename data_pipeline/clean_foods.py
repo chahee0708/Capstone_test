@@ -38,7 +38,9 @@ clean_foods.py — 식품 영양성분 원본 데이터 정제 스크립트
         기존 파일이 있으면 합친 뒤 report_no 별로 최신 data_creation_date 행만 남긴다.
         → 같은 형식의 새 파일을 여러 번 돌려도 누적·갱신된다.
     - errors.csv      : 이번 실행에서 처리하지 못한 행 + 실패 이유 (UTF-8 with BOM, 매 실행 덮어씀)
-    - 콘솔            : 전체/성공/에러 행 수, serving_size로 기준량을 대체한 행 목록
+    - allergen_groups.csv : [추가] 알레르기 통일 이름 → 묶음 그룹 (컬럼: name, group). 화면 묶음 선택지 연결용
+    - 콘솔            : 전체/성공/에러 행 수, serving_size로 기준량을 대체한 행 목록,
+                        [추가] ALLERGEN_MAP 에 없는 알레르기 이름 경고
 
 [호출]
     데이터 담당자가 새 원본 파일을 받을 때마다 수동으로 실행한다.
@@ -167,6 +169,67 @@ BACTERIA_COUNT = re.compile(r"CFU|\d+\s*(?:억|만)\s*(?:마리|이상)", re.IGN
 # [추가] 항목 끝에서 지울 문장부호: 마침표(.), 그리고 구성품명 앞 조각에 남는 하이픈
 # 예) "고추맛후레이크." → "고추맛후레이크", "비타민B2.-스프류/육개장조미료" 의 앞 조각 "비타민B2.-" → "비타민B2"
 TRAILING_PUNCT = re.compile(r"[\s.\-]+$")
+
+# [추가] 함량 표기 "숫자%" (숫자와 % 사이 공백 허용). 항목 어디에 있든 삭제
+# 예) "땅콩 100%" → "땅콩", "땅콩100%" → "땅콩", "준초콜릿 24 %" → "준초콜릿"
+PERCENT = re.compile(r"\s*\d+(?:\.\d+)?\s*%")
+
+# [추가] 등급·기준 표기: "1A등급", "1++등급", "1등급", "1급A", "1급"
+# 앞 글자가 영문/숫자/한글이면 제거하지 않음 (다른 단어의 일부 보호)
+# 예) "1A등급 원유" → "원유", "1급A저지방우유" → "저지방우유"
+GRADE = re.compile(r"(?<![A-Za-z0-9가-힣])(?:\d\+{0,2}[A-Z]?\s*등급|\d급[A-Z]?)\s*")
+
+# [추가] 항목 앞에 붙은 원산지 표기
+#   (1) "국산/국내산/외국산/수입산" + 원재료 (공백 유무 무관). 예) "국산 원유" → "원유", "국산쌀가루" → "쌀가루"
+#   (2) "국가명산/" + 원재료. 예) "중국산/고춧가루" → "고춧가루"
+ORIGIN_PREFIX = re.compile(
+    r"^(?:(?:국산|국내산|외국산|수입산)\s*/?\s*|(?:"
+    + "|".join(sorted(map(re.escape, ORIGIN_COUNTRIES), key=len, reverse=True))
+    + r")산\s*/\s*)"
+)
+
+# [추가] 항목 끝에 붙은 "공백+국가명산". 예) "치즈 뉴질랜드산" → "치즈", "딸기씨 폴란드산" → "딸기씨"
+ORIGIN_TRAILING = re.compile(
+    r"\s+(?:"
+    + "|".join(sorted(map(re.escape, ORIGIN_COUNTRIES), key=len, reverse=True))
+    + r")산$"
+)
+
+# [추가] "/" 로 이어진 짧은 원재료 이름(한글 1~4자)들. 예) "양파/마늘" → "양파", "마늘"
+# 한쪽이라도 길면 하나의 이름으로 유지. 예) "이눌린/치커리추출물" 그대로
+SHORT_SLASH_PAIR = re.compile(r"[가-힣]{1,4}(?:\s*/\s*[가-힣]{1,4})+")
+
+# [추가] 괄호 안 항목이 원재료가 아니라 주석(원산지·품질 기준)인지 판별
+# 예) "원유 100%(국산, 세균수 기준)", "원유 100% (체세포수 기준 1급, 세균수 기준 1급A)"
+#     → 괄호 펼치기 대상에서 제외 (펼치면 "국산", "세균수 기준" 이 원재료가 됨)
+ANNOTATION_ITEM = re.compile(
+    r"기준|^(?:국산|국내산|외국산|수입산|(?:"
+    + "|".join(sorted(map(re.escape, ORIGIN_COUNTRIES), key=len, reverse=True))
+    + r")산?)$"
+)
+
+# [추가] 알레르기 이름 통일 맵: 원본 표기 → 통일 이름 (None = 알레르기 성분 아님, 삭제)
+ALLERGEN_MAP = {
+    "계란": "계란", "달걀": "계란", "알류": "계란", "알류(달걀)": "계란",
+    "쇠고기": "쇠고기", "소고기": "쇠고기",
+    "돼지고기": "돼지고기", "돼지 고기": "돼지고기",
+    "d-토코페롤(혼합형)": None,
+    # 그대로 쓰는 이름
+    "우유": "우유", "대두": "대두", "밀": "밀", "땅콩": "땅콩", "닭고기": "닭고기",
+    "새우": "새우", "토마토": "토마토", "오징어": "오징어", "호두": "호두", "게": "게",
+    "아황산류": "아황산류", "복숭아": "복숭아", "메밀": "메밀", "고등어": "고등어",
+    "헤이즐넛": "헤이즐넛",
+}
+# [추가] 이 문자열로 시작하는 모든 표기는 통일 이름으로. 예) "조개류(굴·홍합 포함)" → "조개류"
+ALLERGEN_PREFIX_MAP = {"조개류": "조개류"}
+
+# [추가] 알레르기 그룹 (사용자 화면의 묶음 선택지). 여기 없는 이름은 group = name
+# ※ 오징어, 조개류는 생선이 아님 → 각자 이름이 그룹
+ALLERGEN_GROUPS = {
+    "호두": "견과류", "헤이즐넛": "견과류",
+    "새우": "갑각류", "게": "갑각류",
+    "고등어": "생선",
+}
 
 
 # ------------------------------------------------------------------
@@ -356,15 +419,66 @@ def strip_bacteria_count(name: str) -> str:
     return re.sub(r"\d.*$", "", name).strip()
 
 
+def strip_origin_prefix(name: str, removed_log=None) -> str:
+    """
+    [추가] 항목 앞에 붙은 원산지 제거. 예) "국산 원유" → "원유", "중국산/고춧가루" → "고춧가루"
+    지우고 나서 남는 글자가 없으면 원래 값 유지
+    """
+    m = ORIGIN_PREFIX.match(name)
+    if not m or not name[m.end():].strip():
+        return name
+    if removed_log is not None:
+        removed_log.append(m.group(0).strip())
+    return name[m.end():].strip()
+
+
+def first_bracket_content(text: str):
+    """[추가] 최상위(깊이 0)의 첫 번째 괄호 안 내용을 반환. 괄호가 없으면 None"""
+    depth, start = 0, None
+    for i, ch in enumerate(text):
+        if ch in OPEN_BRACKETS:
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif ch in CLOSE_BRACKETS and depth > 0:
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+    return text[start:] if start is not None else None  # 닫는 괄호가 빠진 경우 끝까지
+
+
+def expand_single_item(text: str) -> str:
+    """
+    [추가] 괄호 밖 원재료가 1개뿐이고 그 괄호 안에 쉼표가 있으면, 괄호 안 내용을 원재료 문자열로 사용.
+    예) "고추양념(고춧가루, 정제소금, 물엿, …)" → "고춧가루, 정제소금, 물엿, …"
+    괄호 안 항목 중 원산지·기준 주석이 있으면 펼치지 않는다.
+    예) "국산 원유 100% (체세포수 기준 1급, 세균수 기준 1급A)" → 그대로
+    펼친 결과가 다시 같은 형태면 반복한다.
+    """
+    while True:
+        parts = [p for p in split_top_level(text) if p.strip()]
+        if len(parts) != 1:
+            return text
+        inner = first_bracket_content(parts[0])
+        if inner is None:
+            return text
+        items = [re.sub(r"\s+", " ", remove_brackets(p)).strip() for p in split_top_level(inner)]
+        items = [i for i in items if i]
+        if len(items) < 2 or any(ANNOTATION_ITEM.search(i) for i in items):
+            return text
+        text = inner
+
+
 def build_ingredient_list(text, removed_origins=None):
     """
     원재료 문자열 → "|" 로 이어진 원재료 목록 (빈 값 제거, 중복 제거, 원래 순서 유지)
-    [변경] removed_origins(list)를 주면 삭제된 원산지 표기("/○○산")를 기록한다
+    [변경] removed_origins(list)를 주면 삭제된 원산지 표기("/○○산", 앞에 붙은 "국산" 등)를 기록한다
     """
     if pd.isna(text):
         return None
     seen = []
-    for part in split_top_level(str(text)):
+    # [추가] 단일 원재료 + 괄호 안 쉼표 → 괄호 안 항목을 원재료로
+    for part in split_top_level(expand_single_item(str(text))):
         # 괄호 및 내용 제거 → 연속 공백 1칸으로 → 앞뒤 공백 제거
         name = re.sub(r"\s+", " ", remove_brackets(part)).strip()
         # [추가] 유산균 수 제거 ("/mL", "/400g" 이 포함되므로 다른 "/" 처리보다 먼저)
@@ -375,12 +489,25 @@ def build_ingredient_list(text, removed_origins=None):
         for piece in strip_component_prefix(name):
             # [추가] "구성품명/" 제거 (앞에 붙은 원재료가 있으면 분리)
             for sub in strip_component_slash(piece):
-                # [추가] 끝의 마침표 제거 → 번호 접미사 정규화 ("비타민 B2." → "비타민 B2" 는 영문 뒤라 유지)
-                sub = TRAILING_PUNCT.sub("", sub)
-                sub = strip_number_suffix(sub)
-                # 정규화 후 같은 이름은 첫 등장만 유지
-                if sub and sub not in seen:
-                    seen.append(sub)
+                # [추가] "숫자%" 제거 → 등급 표기 제거 → 앞에 붙은 원산지 제거
+                sub = PERCENT.sub("", sub).strip()
+                sub = GRADE.sub("", sub).strip()
+                sub = strip_origin_prefix(sub, removed_origins)
+                # [추가] 끝에 붙은 "공백+국가명산" 제거 (번호 접미사 정리보다 먼저 → "전분가공품1 미국산" → "전분가공품")
+                m = ORIGIN_TRAILING.search(sub)
+                if m:
+                    if removed_origins is not None:
+                        removed_origins.append(m.group(0).strip())
+                    sub = sub[:m.start()].strip()
+                # [추가] 짧은 이름끼리 "/" 로 이어져 있으면 각각 분리. 예) "양파/마늘" → "양파", "마늘"
+                names = sub.split("/") if SHORT_SLASH_PAIR.fullmatch(sub) else [sub]
+                for sub in names:
+                    # [추가] 끝의 마침표 제거 → 번호 접미사 정규화 ("비타민 B2." → "비타민 B2" 는 영문 뒤라 유지)
+                    sub = TRAILING_PUNCT.sub("", sub.strip())
+                    sub = strip_number_suffix(sub)
+                    # 정규화 후 같은 이름은 첫 등장만 유지
+                    if sub and sub not in seen:
+                        seen.append(sub)
     return "|".join(seen) if seen else None
 
 
@@ -388,11 +515,33 @@ def build_ingredient_list(text, removed_origins=None):
 # 5. 알레르기 목록
 # ------------------------------------------------------------------
 
-def build_allergen_list(text):
-    """쉼표 분리 → 공백 제거 → "|" 로 연결. 빈 값이면 빈 값"""
+def normalize_allergen(name: str, unknown_log=None):
+    """
+    [추가] 알레르기 이름을 ALLERGEN_MAP 기준으로 통일. None 이면 삭제 대상
+    맵에 없는 새 이름은 그대로 두고 unknown_log(set)에 기록 (콘솔 경고용)
+    """
+    if name in ALLERGEN_MAP:
+        return ALLERGEN_MAP[name]
+    for prefix, unified in ALLERGEN_PREFIX_MAP.items():
+        if name.startswith(prefix):
+            return unified
+    if unknown_log is not None:
+        unknown_log.add(name)
+    return name
+
+
+def build_allergen_list(text, unknown_log=None):
+    """
+    쉼표 분리 → 공백 제거 → "|" 로 연결. 빈 값이면 빈 값
+    [변경] 이름 통일(ALLERGEN_MAP) 후 한 음식 안 중복 제거 (원래 순서 유지)
+    """
     if pd.isna(text):
         return None
-    items = [a.strip() for a in str(text).split(",") if a.strip()]
+    items = []
+    for a in str(text).split(","):
+        name = normalize_allergen(a.strip(), unknown_log) if a.strip() else None
+        if name and name not in items:
+            items.append(name)
     return "|".join(items) if items else None
 
 
@@ -403,11 +552,13 @@ def build_allergen_list(text):
 def clean_rows(df: pd.DataFrame):
     """
     모든 행을 정제한다.
-    반환: (성공 행 DataFrame, 에러 행 DataFrame, serving_size 대체 목록, 삭제된 원산지 목록)
-    [변경] 삭제된 원산지 표기 목록을 함께 반환
+    반환: (성공 행 DataFrame, 에러 행 DataFrame, serving_size 대체 목록, 삭제된 원산지 목록,
+           맵에 없는 알레르기 이름 set)
+    [변경] 삭제된 원산지 표기 목록, 맵에 없는 알레르기 이름을 함께 반환
     """
     clean_records, error_records, fallback_rows = [], [], []
     removed_origins = []  # [추가] (제품명, 삭제된 "/○○산" 문자열)
+    unknown_allergens = set()  # [추가] ALLERGEN_MAP 에 없는 알레르기 이름
 
     for _, row in df.iterrows():
         # (0) 식별자 확인: product_report_no 가 없으면 중복 판정이 불가능하므로 에러
@@ -455,14 +606,14 @@ def clean_rows(df: pd.DataFrame):
             "serving_unit": unit,  # [변경] "100g 기준" → "g" / "ml"
             **nutrients,
             "ingredient_list": build_ingredient_list(row["ingredients"], origin_log),
-            "allergen_list": build_allergen_list(row["allergy_ingredients"]),
+            "allergen_list": build_allergen_list(row["allergy_ingredients"], unknown_allergens),  # [변경] 이름 통일
             "data_creation_date": row["data_creation_date"],
         })
         removed_origins.extend((row["food_name"], o) for o in origin_log)
 
     clean_df = pd.DataFrame(clean_records, columns=OUTPUT_COLUMNS)
     error_df = pd.DataFrame(error_records, columns=REQUIRED_COLUMNS + ["error_reason"])
-    return clean_df, error_df, fallback_rows, removed_origins
+    return clean_df, error_df, fallback_rows, removed_origins, unknown_allergens
 
 
 # ------------------------------------------------------------------
@@ -496,6 +647,10 @@ def merge_and_dedupe(new_df: pd.DataFrame, out_path: Path) -> pd.DataFrame:
         old_df["serving_unit"] = old_df["serving_unit"].str.replace(r"^100(g|ml) 기준$", r"\1", regex=True)
         for col in NUTRIENT_MAP.values():
             old_df[col] = pd.to_numeric(old_df[col], errors="coerce")
+        # [추가] 이번 입력에 없는 기존 행도 알레르기 이름이 통일되도록 다시 정규화 ("|" → "," 로 되돌려 재사용)
+        old_df["allergen_list"] = old_df["allergen_list"].map(
+            lambda v: build_allergen_list(v.replace("|", ",")) if pd.notna(v) else v
+        )
         frames.append(old_df.reindex(columns=OUTPUT_COLUMNS))
     frames.append(new_df)
     merged = pd.concat(frames, ignore_index=True)
@@ -509,6 +664,22 @@ def merge_and_dedupe(new_df: pd.DataFrame, out_path: Path) -> pd.DataFrame:
     merged = merged.sort_values(["_date", "_order"], na_position="first")
     merged = merged.drop_duplicates(subset="report_no", keep="last")
     return merged.sort_values("_order").drop(columns=["_order", "_date"]).reset_index(drop=True)
+
+
+def build_allergen_groups(final_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    [추가] allergen_groups.csv 내용 생성 (컬럼: name, group)
+    통일 이름 전체 + 데이터에 나온 맵 밖 이름. 그룹이 지정되지 않은 이름은 group = name
+    """
+    names = []
+    for unified in list(ALLERGEN_MAP.values()) + list(ALLERGEN_PREFIX_MAP.values()):
+        if unified and unified not in names:
+            names.append(unified)
+    for value in final_df["allergen_list"].dropna():
+        for name in value.split("|"):
+            if name not in names:
+                names.append(name)
+    return pd.DataFrame({"name": names, "group": [ALLERGEN_GROUPS.get(n, n) for n in names]})
 
 
 # ------------------------------------------------------------------
@@ -527,17 +698,19 @@ def main():
 
     # 원본 읽기 → 행 단위 정제
     raw_df = read_raw(in_path)
-    clean_df, error_df, fallback_rows, removed_origins = clean_rows(raw_df)
+    clean_df, error_df, fallback_rows, removed_origins, unknown_allergens = clean_rows(raw_df)
 
     # 이번 입력 파일 안의 중복도 함께 처리되도록 기존 결과와 병합 후 중복 제거
     CLEAN_DIR.mkdir(parents=True, exist_ok=True)
     out_path = CLEAN_DIR / "foods_clean.csv"
     err_path = CLEAN_DIR / "errors.csv"
+    groups_path = CLEAN_DIR / "allergen_groups.csv"  # [추가]
     final_df = merge_and_dedupe(clean_df, out_path)
 
     # 저장 (UTF-8 with BOM → 엑셀에서 한글이 깨지지 않음)
     final_df.to_csv(out_path, index=False, encoding="utf-8-sig")
     error_df.to_csv(err_path, index=False, encoding="utf-8-sig")
+    build_allergen_groups(final_df).to_csv(groups_path, index=False, encoding="utf-8-sig")  # [추가]
 
     # 콘솔 요약 출력
     print(f"입력 파일          : {in_path}")
@@ -552,11 +725,16 @@ def main():
     print(f"\n[원재료에서 삭제한 원산지 표기: {len(removed_origins)}건]")
     for name, origin in removed_origins:
         print(f"  - {name}: '{origin}'")
+    # [추가] ALLERGEN_MAP 에 없는 새 알레르기 이름 경고 (맵/그룹에 추가 필요)
+    if unknown_allergens:
+        print(f"\n[경고] ALLERGEN_MAP 에 없는 알레르기 이름 {len(unknown_allergens)}개 (원본 그대로 저장함):")
+        for name in sorted(unknown_allergens):
+            print(f"  - {name}")
     if len(error_df):
         print("\n[에러 행]")
         for _, r in error_df.iterrows():
             print(f"  - {r['food_name']}: {r['error_reason']}")
-    print(f"\n저장 완료: {out_path}\n          {err_path}")
+    print(f"\n저장 완료: {out_path}\n          {err_path}\n          {groups_path}")
 
 
 if __name__ == "__main__":
