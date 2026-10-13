@@ -10,9 +10,22 @@
  *   3. 질병 있음 → scoreForDiseaseUser로 판정
  *      질병 없음 → scoreForHealthyUser로 판정 (KDRI 일반인 기준치)
  *   4. 알레르기 있는 유저만 allergyService 호출
- *   5. 최종 JSON 응답 (dailyReference 포함)
+ *   5. 알레르기 성분이 1개 이상이면 최종 verdict 를 "비추천" 으로 강제
+ *   6. 최종 JSON 응답 (dailyReference 포함)
  *
- * ── 이번 변경(STEP 1) ────────────────────────────────────────
+ * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
+ *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
+ *
+ * ── 이번 변경(알레르기 우선 규칙) ─────────────────────────────
+ *   - 알레르기 성분이 있으면 질환/ML/무질환 판정과 관계없이 verdict = "비추천"
+ *   - 응답 필드 추가 (기존 필드 이름·형식은 그대로)
+ *       allergens        : 걸린 알레르기 이름 배열 (없으면 [])
+ *       allergyOverride  : 알레르기 규칙이 적용됐는지 (allergens 가 1개 이상이면 true)
+ *                          영양 판정이 이미 "비추천" 이었어도 알레르기가 있으면 true
+ *       nutritionVerdict : 알레르기 적용 전 영양 판정 ("추천"|"주의"|"비추천")
+ *   - allergenAlert 는 호환성을 위해 그대로 유지 (allergens 와 같은 값)
+ *
+ * ── 이전 변경(STEP 1) ────────────────────────────────────────
  *   - 응답에 radar(방사형 그래프용), reasons(판정 근거 줄글용), carbInfo(1형 당뇨용) 추가
  *   - dailyReference를 getDailyReference → getDisplayDailyReference로 교체
  *     (탄수화물 기준만 130g → 에너지×65%÷4 로 바뀐다. 판정값은 그대로)
@@ -117,6 +130,13 @@ router.post("/", async (req, res) => {
         ? await checkAllergens(session, foodName, allergens)
         : [];
 
+    // ── Step 5-1. 알레르기 우선 규칙 ──────────────────────────
+    // 영양 판정 결과는 nutritionVerdict 로 따로 보관하고,
+    // 알레르기 성분이 1개라도 있으면 최종 verdict 를 "비추천" 으로 덮어쓴다
+    const nutritionVerdict = result.verdict;
+    const allergyOverride = foundAllergens.length > 0;
+    const finalVerdict = allergyOverride ? "비추천" : nutritionVerdict;
+
     // ── Step 6. KDRI 1일 기준값 → 프론트 가로 막대 차트 max값에 사용 ────
     // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
     const dailyReference = getDisplayDailyReference(user.gender, user.age);
@@ -126,7 +146,8 @@ router.post("/", async (req, res) => {
       productName: foodName,
       userType: hasDiseases ? "disease" : "healthy",
       diseaseTrack: result.diseaseTrack, // "diabetes" | "rule" | "healthy"
-      verdict: result.verdict, // "추천" | "주의" | "비추천"
+      verdict: finalVerdict, // "추천" | "주의" | "비추천" (알레르기 있으면 항상 "비추천")
+      nutritionVerdict, // 알레르기 적용 전 영양 판정
       giCategory: result.giCategory, // ML 트랙: "Low"|"Medium"|"High", 규칙: null
       bmi: result.bmi,
       nutrition: result.nutrition,
@@ -134,7 +155,9 @@ router.post("/", async (req, res) => {
       reasons: result.reasons, // 판정 근거 줄글용 (VerdictExplanation.tsx)
       radar: result.radar, // 방사형 그래프용 6축 (NutrientRadarChart.tsx)
       carbInfo: result.carbInfo, // 1형 당뇨 사용자에게만 값이 들어옴
-      allergenAlert: foundAllergens,
+      allergenAlert: foundAllergens, // 호환성 유지용 (allergens 와 같은 값)
+      allergens: foundAllergens, // 걸린 알레르기 이름 배열 (없으면 [])
+      allergyOverride, // 알레르기 때문에 "비추천" 으로 강제됐는지
       dailyReference,
     });
   } catch (err) {
