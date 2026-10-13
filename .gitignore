@@ -32,3 +32,4 @@ neo4j_data/
 
 venv/
 *.pyc
+backup/
