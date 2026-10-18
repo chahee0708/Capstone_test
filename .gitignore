@@ -32,3 +32,9 @@ neo4j_data/
 
 venv/
 *.pyc
+
+# Python 가상환경 (B/.venv, ml/.venv 등)
+.venv/
+
+# 바코드 원본 CSV(약 47MB) — mapping.json / mapping_meta.json 만 필요하다
+B/barcode_data_raw.csv

@@ -1,6 +1,14 @@
 fastapi
 uvicorn
+python-multipart
 scikit-learn==1.7.0
-numpy
+numpy>=1.26,<2.3
 pandas
 openpyxl
+# OCR (식품 라벨 / 건강검진 결과지) — RapidOCR + ONNX Runtime (CPU)
+rapidocr>=3.10,<4
+onnxruntime>=1.20
+opencv-python-headless
+pillow
+# 바코드 이미지 디코딩 (B 모듈) — Linux 에서는 시스템 패키지 libzbar0 가 필요하다
+pyzbar

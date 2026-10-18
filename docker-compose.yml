@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   frontend:
     build: ./frontend
@@ -14,6 +12,17 @@ services:
     build: ./ml
     ports:
       - "8000:8000"
+    environment:
+      # 바코드 모듈(B 폴더: barcode_module.py, mapping.json, mapping_meta.json)
+      - BARCODE_MODULE_DIR=/app/B
+    volumes:
+      - ./B:/app/B:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
 
   backend:
     build: ./backend
@@ -32,7 +41,10 @@ services:
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=password123
-      - JWT_SECRET=safebite-jwt-secret-2024
+      # 운영 배포 시 .env 파일 또는 셸 환경변수로 반드시 교체하세요 (예: openssl rand -hex 32)
+      - JWT_SECRET=${JWT_SECRET:-safebite-dev-only-secret-change-me}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
+      - ML_SERVICE_URL=http://ml:8000
 
   mysql:
     image: mysql:8.0
