@@ -11,6 +11,9 @@ clean_foods.py — 식품 영양성분 원본 데이터 정제 스크립트
 [입력]
     명령행 인자 1개: 원본 파일 경로 (25개 컬럼, 형식은 README/요구사항 참고)
     예) python clean_foods.py raw/emart_foods.csv.xlsx
+        python clean_foods.py raw/manual_foods.csv
+    [추가] 24컬럼 파일(food_category_mid 없음)도 지원: 중분류가 food_category_minor 에 들어 있으면 그것을 사용
+    [추가] 중분류 이름은 CATEGORY_MERGE 로 합친다 (라면·컵라면 → 라면, 햄·가공육 → 햄·가공육)
 
 [출력] (data_pipeline/clean/)
     - foods_clean.csv : 정제된 식품 데이터 (UTF-8 with BOM). 컬럼 = Neo4j Food 노드 속성 이름
@@ -95,6 +98,14 @@ OUTPUT_COLUMNS = (
     + ["ingredient_list", "allergen_list", "data_creation_date"]
 )
 
+# [추가] 중분류 합치기: 원본 중분류 → 저장할 중분류 (여기 없는 이름은 그대로)
+CATEGORY_MERGE = {
+    "라면": "라면",
+    "컵라면": "라면",
+    "햄": "햄·가공육",
+    "가공육": "햄·가공육",
+}
+
 # [추가] 이전 버전 foods_clean.csv 의 컬럼 이름 → 새 이름 (기존 결과와 병합할 때 사용)
 LEGACY_OUTPUT_RENAME = {
     "product_report_no": "report_no",
@@ -172,7 +183,12 @@ TRAILING_PUNCT = re.compile(r"[\s.\-]+$")
 
 # [추가] 함량 표기 "숫자%" (숫자와 % 사이 공백 허용). 항목 어디에 있든 삭제
 # 예) "땅콩 100%" → "땅콩", "땅콩100%" → "땅콩", "준초콜릿 24 %" → "준초콜릿"
-PERCENT = re.compile(r"\s*\d+(?:\.\d+)?\s*%")
+# [추가] 숫자가 빠진 "%" 단독 표기도 삭제 (원본 오타 대비). 예) "D-말티톨%" → "D-말티톨"
+PERCENT = re.compile(r"\s*(?:\d+(?:\.\d+)?)?\s*%")
+
+# [추가] 항목 앞에 남은 콜론: 괄호로 된 구성품명이 괄호째 지워진 경우
+# 예) "[밀크초콜릿 70%]: 설탕" → (괄호 제거) ": 설탕" → "설탕"
+LEADING_COLON = re.compile(r"^[\s:]+")
 
 # [추가] 등급·기준 표기: "1A등급", "1++등급", "1등급", "1급A", "1급"
 # 앞 글자가 영문/숫자/한글이면 제거하지 않음 (다른 단어의 일부 보호)
@@ -211,9 +227,15 @@ ANNOTATION_ITEM = re.compile(
 # [추가] 알레르기 이름 통일 맵: 원본 표기 → 통일 이름 (None = 알레르기 성분 아님, 삭제)
 ALLERGEN_MAP = {
     "계란": "계란", "달걀": "계란", "알류": "계란", "알류(달걀)": "계란",
+    "알류(계란)": "계란", "난류": "계란",  # [추가]
     "쇠고기": "쇠고기", "소고기": "쇠고기",
     "돼지고기": "돼지고기", "돼지 고기": "돼지고기",
     "d-토코페롤(혼합형)": None,
+    # [추가] 조개류 단독 표기 / 아황산류 다른 이름
+    "굴": "조개류", "홍합": "조개류",
+    "이산화황": "아황산류",
+    # [추가] 새 이름 (그룹은 ALLERGEN_GROUPS: 잣 → 견과류, 산양유 → 우유)
+    "잣": "잣", "산양유": "산양유",
     # 그대로 쓰는 이름
     "우유": "우유", "대두": "대두", "밀": "밀", "땅콩": "땅콩", "닭고기": "닭고기",
     "새우": "새우", "토마토": "토마토", "오징어": "오징어", "호두": "호두", "게": "게",
@@ -221,12 +243,14 @@ ALLERGEN_MAP = {
     "헤이즐넛": "헤이즐넛",
 }
 # [추가] 이 문자열로 시작하는 모든 표기는 통일 이름으로. 예) "조개류(굴·홍합 포함)" → "조개류"
+#        공백·괄호 변형도 앞부분이 같으므로 포함. 예) "조개류 (굴)", "조개류 ( 굴 ·홍합 포함 )"
 ALLERGEN_PREFIX_MAP = {"조개류": "조개류"}
 
 # [추가] 알레르기 그룹 (사용자 화면의 묶음 선택지). 여기 없는 이름은 group = name
 # ※ 오징어, 조개류는 생선이 아님 → 각자 이름이 그룹
 ALLERGEN_GROUPS = {
-    "호두": "견과류", "헤이즐넛": "견과류",
+    "호두": "견과류", "헤이즐넛": "견과류", "잣": "견과류",  # [변경] 잣 추가
+    "산양유": "우유",  # [추가]
     "새우": "갑각류", "게": "갑각류",
     "고등어": "생선",
 }
@@ -249,6 +273,10 @@ def read_raw(path: Path) -> pd.DataFrame:
 
     # 컬럼명 앞뒤 공백 제거 후 필수 컬럼 존재 여부 확인
     df.columns = [str(c).strip() for c in df.columns]
+    # [추가] 24컬럼 형식: food_category_mid 가 없고 중분류가 food_category_minor 에 들어 있음
+    #        → minor 를 중분류로 사용 (25컬럼 파일은 기존 그대로 mid 사용)
+    if "food_category_mid" not in df.columns and "food_category_minor" in df.columns:
+        df["food_category_mid"] = df["food_category_minor"]
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"필수 컬럼이 없습니다: {missing}")
@@ -283,6 +311,7 @@ def resolve_reference(row):
     ref = row["nutrient_reference_amount"]
 
     # (1) nutrient_reference_amount 가 "숫자+단위" 형식이면 그대로 사용 (예: "100g", "190mL")
+    #     [추가] 대소문자 무시(IGNORECASE) → "100G" 도 g 로 인식 (단위는 parse_amount 에서 소문자로 통일)
     if pd.notna(ref) and re.fullmatch(r"\d+(?:\.\d+)?\s*(g|ml)", str(ref).replace(",", ""), re.IGNORECASE):
         value, unit = parse_amount(ref)
         return value, unit, False
@@ -371,7 +400,10 @@ def strip_component_prefix(name: str):
     if not m:
         return [name]
     before, _component, rest = m.groups()
-    return [s for s in (before, rest) if s]
+    # [추가] 앞부분에도 "구성품명:" 이 있으면 다시 처리 (구성품 사이 쉼표가 빠진 경우)
+    # 예) "당면:당면 스프류:마라소스" → ["당면", "마라소스"]
+    head = strip_component_prefix(before) if before else []
+    return head + ([rest] if rest else [])
 
 
 def strip_number_suffix(name: str) -> str:
@@ -481,6 +513,8 @@ def build_ingredient_list(text, removed_origins=None):
     for part in split_top_level(expand_single_item(str(text))):
         # 괄호 및 내용 제거 → 연속 공백 1칸으로 → 앞뒤 공백 제거
         name = re.sub(r"\s+", " ", remove_brackets(part)).strip()
+        # [추가] 괄호째 지워진 구성품명 뒤에 남은 앞 콜론 제거
+        name = LEADING_COLON.sub("", name)
         # [추가] 유산균 수 제거 ("/mL", "/400g" 이 포함되므로 다른 "/" 처리보다 먼저)
         name = strip_bacteria_count(name)
         # [추가] "/원산지" 제거 (구성품명 처리보다 먼저 → "소스/중국산" 이 "중국산" 으로 남는 것 방지)
@@ -602,7 +636,8 @@ def clean_rows(df: pd.DataFrame):
             "name": row["food_name"],
             "company": row["manufacturer"],
             "category_major": row["food_category_major"],
-            "category_mid": row["food_category_mid"],
+            # [변경] 중분류 합치기 (라면·컵라면 → 라면 등)
+            "category_mid": CATEGORY_MERGE.get(row["food_category_mid"], row["food_category_mid"]),
             "serving_unit": unit,  # [변경] "100g 기준" → "g" / "ml"
             **nutrients,
             "ingredient_list": build_ingredient_list(row["ingredients"], origin_log),
@@ -647,6 +682,8 @@ def merge_and_dedupe(new_df: pd.DataFrame, out_path: Path) -> pd.DataFrame:
         old_df["serving_unit"] = old_df["serving_unit"].str.replace(r"^100(g|ml) 기준$", r"\1", regex=True)
         for col in NUTRIENT_MAP.values():
             old_df[col] = pd.to_numeric(old_df[col], errors="coerce")
+        # [추가] 기존 행의 중분류도 같은 규칙으로 합친다
+        old_df["category_mid"] = old_df["category_mid"].map(lambda v: CATEGORY_MERGE.get(v, v))
         # [추가] 이번 입력에 없는 기존 행도 알레르기 이름이 통일되도록 다시 정규화 ("|" → "," 로 되돌려 재사용)
         old_df["allergen_list"] = old_df["allergen_list"].map(
             lambda v: build_allergen_list(v.replace("|", ",")) if pd.notna(v) else v
