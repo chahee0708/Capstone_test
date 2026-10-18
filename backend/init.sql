@@ -1,7 +1,7 @@
 -- users 테이블 생성
 -- 질병 심각도 컬럼 설명:
 --   hypertension_stage: 고혈압 단계 (1 = Stage I, 2 = Stage II)
---   ldl_level: 이상지질혈증 심각도 ('borderline', 'high', 'very_high')
+--   ldl_value / tg_value / hdl_value: 이상지질혈증 지질 수치 (mg/dL, 미입력은 NULL)
 --   gfr_value: 신장병 GFR 수치 (0 = 이식환자, 1~19 = 말기, 20~50 = 중기, 51이상 = 해당없음)
 
 CREATE TABLE IF NOT EXISTS users (
@@ -29,28 +29,28 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- 테스트 데이터 (기존 유저)
--- bcrypt hash for "password123": $2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW
+-- 테스트 계정 공통 비밀번호: password123 (bcryptjs, cost 10 으로 생성한 해시)
 
 -- 2형 당뇨 환자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens)
-VALUES ('홍길동', 'user1@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 45, 80, 170, 'male', '["2형 당뇨"]', '["우유"]');
+VALUES ('홍길동', 'user1@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 45, 80, 170, 'male', '["2형 당뇨"]', '["우유"]');
 
 -- 고혈압 Stage II 환자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens, hypertension_stage)
-VALUES ('이영희', 'user2@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 55, 70, 165, 'female', '["고혈압"]', '[]', 2);
+VALUES ('이영희', 'user2@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 55, 70, 165, 'female', '["고혈압"]', '[]', 2);
 
 -- 이상지질혈증 환자 (LDL 높음, TG 높음, HDL 낮음)
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens, ldl_value, tg_value, hdl_value)
-VALUES ('박민수', 'user3@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 50, 85, 175, 'male', '["이상지질혈증"]', '[]', 165.0, 220.0, 38.0);
+VALUES ('박민수', 'user3@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 50, 85, 175, 'male', '["이상지질혈증"]', '[]', 165.0, 220.0, 38.0);
 
 -- 신장병 (GFR 30) 환자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens, gfr_value)
-VALUES ('최지수', 'user4@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 60, 65, 160, 'female', '["신장병"]', '[]', 30);
+VALUES ('최지수', 'user4@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 60, 65, 160, 'female', '["신장병"]', '[]', 30);
 
 -- 1형 당뇨 환자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens)
-VALUES ('김철수', 'user5@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 28, 65, 175, 'male', '["1형 당뇨"]', '[]');
+VALUES ('김철수', 'user5@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 28, 65, 175, 'male', '["1형 당뇨"]', '[]');
 
 -- 질병 없는 건강한 사용자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens)
-VALUES ('정하나', 'user6@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 30, 58, 163, 'female', '[]', '[]');
+VALUES ('정하나', 'user6@test.com', '$2a$10$wDyklmOzHNEhNYNer9lcqeyrJy1d50VrfBjmgUg02yRAMXFH/3rm.', 30, 58, 163, 'female', '[]', '[]');

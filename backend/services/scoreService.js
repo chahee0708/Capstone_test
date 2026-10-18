@@ -18,8 +18,9 @@
  * 여러 질병 동시 보유 시: 각 질병별 독립 판정 후 가장 보수적 판정 채택
  */
 
-const http = require("http");
+const config = require("../config");
 const { getFoodNutrition } = require("./foodService");
+const { MlServiceError } = require("./errors");
 
 // ─────────────────────────────────────────────────────────────
 // KDRI 테이블 (한국인 영양소 섭취기준, 한국영양학회 2020)
@@ -227,6 +228,8 @@ function evaluateNutrient(value, dailyLimit) {
 }
 
 const LEVEL_RANK = { low: 0, mid: 1, high: 2 };
+const VERDICT_RANK = { 추천: 0, 주의: 1, 비추천: 2 };
+const VERDICT_BY_RANK = ["추천", "주의", "비추천"];
 
 /**
  * 영양소 평가 목록을 종합해서 최종 verdict 반환
@@ -237,13 +240,17 @@ const LEVEL_RANK = { low: 0, mid: 1, high: 2 };
  */
 function combineResults(evaluations) {
   const warnings = [];
+  const items = [];
   let worstRank = 0;
 
   for (const { nutrientName, value, dailyLimit } of evaluations) {
-    // 값이 없거나 0이면 스킵 (Neo4j에 없는 영양소)
-    if (value === undefined || value === null) continue;
+    // 값이 없거나 숫자가 아니면 스킵 (Neo4j에 없는 영양소)
+    if (value === undefined || value === null || !Number.isFinite(value)) continue;
+    // 1일 한도를 계산할 수 없으면(체중 누락 등) 잘못된 "추천"을 만들지 않도록 스킵
+    if (!Number.isFinite(dailyLimit) || dailyLimit <= 0) continue;
 
     const { level, percent } = evaluateNutrient(value, dailyLimit);
+    items.push({ nutrient: nutrientName, value, dailyLimit, percent, level });
 
     if (level === "high") {
       warnings.push(`${nutrientName} 높음 (1일 기준 ${percent}%) — 비추천`);
@@ -257,7 +264,7 @@ function combineResults(evaluations) {
   const verdict =
     worstRank === 2 ? "비추천" : worstRank === 1 ? "주의" : "추천";
 
-  return { verdict, warnings };
+  return { verdict, warnings, items };
 }
 
 function calcBMI(weight, height) {
@@ -268,47 +275,56 @@ function calcBMI(weight, height) {
 // ─────────────────────────────────────────────────────────────
 // ML 서비스 호출 (2형 당뇨 전용)
 // ─────────────────────────────────────────────────────────────
-function callMLService(nutrition) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      calories: nutrition.calories,
-      protein: nutrition.protein,
-      fats: nutrition.fat,
-      carbs: nutrition.carbohydrate,
-      fiber: 0, // TODO: Neo4j 스키마 확장 후 교체
-      sugar: nutrition.sugar,
-      phosphorus: 0, // TODO: Neo4j 스키마 확장 후 교체
-      potassium: 0, // TODO: Neo4j 스키마 확장 후 교체
-      sodium: nutrition.sodium,
-      saturated_fat: nutrition.saturatedFat,
-      trans_fat: nutrition.transFat,
-    });
+const ML_CATEGORIES = new Set(["Low", "Medium", "High"]);
 
-    const options = {
-      hostname: "ml",
-      port: 8000,
-      path: "/predict",
+/**
+ * ML 서비스(/predict) 호출.
+ * - 타임아웃을 두고, 연결 실패/비정상 상태코드/잘못된 응답은 MlServiceError 로 통일한다.
+ *   (이전 구현은 응답 JSON.parse 예외가 이벤트 핸들러에서 발생해 프로세스가 종료될 수 있었다.)
+ * - fetchImpl 은 테스트에서 주입한다.
+ */
+async function callMLService(nutrition, fetchImpl = fetch) {
+  const body = {
+    calories: nutrition.calories,
+    protein: nutrition.protein,
+    fats: nutrition.fat,
+    carbs: nutrition.carbohydrate,
+    fiber: nutrition.fiber ?? 0,
+    sugar: nutrition.sugar,
+    phosphorus: nutrition.phosphorus ?? 0,
+    potassium: nutrition.potassium ?? 0,
+    sodium: nutrition.sodium,
+    saturated_fat: nutrition.saturatedFat,
+    trans_fat: nutrition.transFat,
+  };
+
+  let res;
+  try {
+    res = await fetchImpl(`${config.ML_SERVICE_URL}/predict`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    };
-
-    const req = http.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => {
-        data += chunk;
-      });
-      res.on("end", () => {
-        resolve(JSON.parse(data));
-      });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(config.ML_TIMEOUT_MS),
     });
+  } catch (err) {
+    throw new MlServiceError("ML 서비스에 연결할 수 없습니다.", err);
+  }
 
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
+  if (!res.ok) {
+    throw new MlServiceError(`ML 서비스 오류 응답 (${res.status})`);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    throw new MlServiceError("ML 서비스 응답을 해석할 수 없습니다.", err);
+  }
+
+  if (!data || !ML_CATEGORIES.has(data.gi_category)) {
+    throw new MlServiceError("ML 서비스가 올바르지 않은 결과를 반환했습니다.");
+  }
+  return data;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -352,20 +368,24 @@ function evaluateHypertension(nutrition, stage) {
  * @param {number} hdlValue - HDL 콜레스테롤 수치 (mg/dL)
  */
 function evaluateDyslipidemia(nutrition, energy, ldlValue, tgValue, hdlValue) {
+  // 수치 미입력(null/undefined)은 "정상"으로 간주한다.
+  // (JS 에서 null < 40 은 true 라서, 미입력 HDL 이 "낮음"으로 판정되던 버그를 막는다.)
+  const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+
   // LDL: 0=정상(<130), 1=경계(130~159), 2=높음(160~189), 3=매우높음(≥190)
-  const ldlSev =
+  const ldlSev = !isNum(ldlValue) ? 0 :
     ldlValue >= 190 ? 3 :
     ldlValue >= 160 ? 2 :
     ldlValue >= 130 ? 1 : 0;
 
   // TG: 0=정상(<150), 1=경계(150~199), 2=높음(200~499), 3=매우높음(≥500)
-  const tgSev =
+  const tgSev = !isNum(tgValue) ? 0 :
     tgValue >= 500 ? 3 :
     tgValue >= 200 ? 2 :
     tgValue >= 150 ? 1 : 0;
 
   // HDL: 0=정상(≥40), 1=낮음(<40)
-  const hdlLow = hdlValue < 40 ? 1 : 0;
+  const hdlLow = isNum(hdlValue) && hdlValue < 40 ? 1 : 0;
 
   const nutrients = [];
 
@@ -476,10 +496,100 @@ function evaluateCKD(nutrition, weight, gfr) {
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * 질환명 정규화: 공백을 제거해 "2형 당뇨" / "2형당뇨" 를 같은 질환으로 취급한다.
+ */
+function normalizeDiseaseName(name) {
+  return String(name || "").replace(/\s+/g, "");
+}
+
+const DIABETES_T2 = normalizeDiseaseName("2형 당뇨");
+const DIABETES_T1 = normalizeDiseaseName("1형 당뇨");
+const HYPERTENSION = normalizeDiseaseName("고혈압");
+const DYSLIPIDEMIA = normalizeDiseaseName("이상지질혈증");
+const CKD = normalizeDiseaseName("신장병");
+
+/**
+ * GI 카테고리 → verdict
+ */
+function verdictFromGi(giCategory) {
+  if (giCategory === "High") return "비추천";
+  if (giCategory === "Medium") return "주의";
+  return "추천";
+}
+
+/**
+ * 규칙 기반 질환들(고혈압/이상지질혈증/1형 당뇨/신장병) 판정
+ * 순수 함수 — 질환별 독립 판정 후 warnings 합산, 가장 나쁜 verdict 채택
+ *
+ * @returns {{ verdict: string|null, warnings: string[], evaluated: string[], unsupported: string[] }}
+ *   verdict 가 null 이면 규칙 기반으로 평가된 질환이 하나도 없다는 뜻
+ */
+function evaluateRuleDiseases(nutrition, diseases, ctx) {
+  const { weight, kdri, diseaseDetails = {} } = ctx;
+  const warnings = [];
+  const evaluated = [];
+  const unsupported = [];
+  const evalByNutrient = new Map(); // 같은 영양소는 가장 엄격한 기준(비율 최대)만 남긴다
+  let worstRank = -1;
+
+  for (const disease of diseases) {
+    const key = normalizeDiseaseName(disease);
+    let result = null;
+
+    if (key === HYPERTENSION) {
+      const stage = diseaseDetails.hypertension_stage || 1;
+      result = evaluateHypertension(nutrition, stage);
+    } else if (key === DYSLIPIDEMIA) {
+      result = evaluateDyslipidemia(
+        nutrition,
+        kdri.에너지,
+        diseaseDetails.ldl_value,
+        diseaseDetails.tg_value,
+        diseaseDetails.hdl_value,
+      );
+    } else if (key === DIABETES_T1) {
+      result = evaluateType1Diabetes(nutrition, kdri.에너지, kdri);
+    } else if (key === CKD) {
+      const gfr =
+        diseaseDetails.gfr_value !== undefined && diseaseDetails.gfr_value !== null
+          ? diseaseDetails.gfr_value
+          : 35;
+      result = evaluateCKD(nutrition, weight, gfr);
+    } else if (key === DIABETES_T2) {
+      continue; // ML 트랙에서 별도 처리
+    }
+
+    if (!result) {
+      unsupported.push(disease);
+      continue;
+    }
+
+    evaluated.push(disease);
+    warnings.push(...result.warnings);
+    worstRank = Math.max(worstRank, VERDICT_RANK[result.verdict]);
+    for (const it of result.items || []) {
+      const prev = evalByNutrient.get(it.nutrient);
+      if (!prev || it.percent > prev.percent) {
+        evalByNutrient.set(it.nutrient, { ...it, disease });
+      }
+    }
+  }
+
+  return {
+    verdict: worstRank < 0 ? null : VERDICT_BY_RANK[worstRank],
+    warnings,
+    evaluated,
+    unsupported,
+    evaluations: Array.from(evalByNutrient.values()).sort((a, b) => b.percent - a.percent),
+  };
+}
+
+/**
  * 질병 보유 사용자의 음식 적합성 판정
  *
  * 여러 질병 동시 보유 시:
- *   각 질병별로 독립 판정 → warnings 합산 → 가장 나쁜 verdict 채택
+ *   - 2형 당뇨 → ML(GI 예측) 판정, 나머지 질환 → 규칙 기반 판정
+ *   - 각 판정을 독립적으로 수행한 뒤 warnings 를 합산하고 가장 보수적인 verdict 채택
  *
  * @param {object} session
  * @param {string} foodName
@@ -488,7 +598,10 @@ function evaluateCKD(nutrition, weight, gfr) {
  * @param {number} height
  * @param {number} age
  * @param {string} gender
- * @param {object} diseaseDetails - { hypertension_stage, ldl_level, gfr_value }
+ * @param {object} diseaseDetails - { hypertension_stage, ldl_value, tg_value, hdl_value, gfr_value }
+ * @param {object} [deps] - 테스트용 주입 { getNutrition, callML }
+ * @returns {Promise<null | object>} 음식이 없으면 null
+ *   판정 가능한 질환이 하나도 없으면 { unsupported: true, unsupportedDiseases }
  */
 async function scoreForDiseaseUser(
   session,
@@ -499,86 +612,49 @@ async function scoreForDiseaseUser(
   age,
   gender,
   diseaseDetails = {},
+  deps = {},
 ) {
-  const nutrition = await getFoodNutrition(session, foodName);
+  const getNutrition = deps.getNutrition || getFoodNutrition;
+  const callML = deps.callML || callMLService;
+
+  const nutrition = await getNutrition(session, foodName);
   if (!nutrition) return null;
 
   const bmi = calcBMI(weight, height);
   const kdri = getDailyReference(gender, age);
 
-  // ── 트랙 1: 2형 당뇨 → ML 기반 판정 ────────────────────────
-  if (diseases.includes("2형 당뇨")) {
-    const mlResult = await callMLService(nutrition);
-    const giCategory = mlResult.gi_category; // "Low" | "Medium" | "High"
+  const hasType2 = diseases.some((d) => normalizeDiseaseName(d) === DIABETES_T2);
+  const rules = evaluateRuleDiseases(nutrition, diseases, {
+    weight,
+    kdri,
+    diseaseDetails,
+  });
 
-    let verdict;
-    if (giCategory === "High") verdict = "비추천";
-    else if (giCategory === "Medium") verdict = "주의";
-    else verdict = "추천";
-
-    return {
-      diseaseTrack: "diabetes",
-      verdict,
-      giCategory,
-      warnings: [],
-      nutrition,
-      bmi: bmi.toFixed(1),
-    };
+  if (!hasType2 && rules.verdict === null) {
+    return { unsupported: true, unsupportedDiseases: rules.unsupported };
   }
 
-  // ── 트랙 2: 규칙 기반 질병들 ─────────────────────────────────
-  // 각 질병별로 독립 판정 후 결과 합산
-  const allWarnings = [];
-  let worstRank = 0;
+  let giCategory = null;
+  let worstRank = rules.verdict === null ? 0 : VERDICT_RANK[rules.verdict];
+  const evaluatedDiseases = [...rules.evaluated];
 
-  for (const disease of diseases) {
-    let result = null;
-
-    if (disease === "고혈압") {
-      const stage = diseaseDetails.hypertension_stage || 1;
-      result = evaluateHypertension(nutrition, stage);
-    } else if (disease === "이상지질혈증") {
-      result = evaluateDyslipidemia(
-        nutrition,
-        kdri.에너지,
-        diseaseDetails.ldl_value,
-        diseaseDetails.tg_value,
-        diseaseDetails.hdl_value,
-      );
-    } else if (disease === "1형 당뇨") {
-      result = evaluateType1Diabetes(nutrition, kdri.에너지, kdri);
-    } else if (disease === "신장병") {
-      const gfr =
-        diseaseDetails.gfr_value !== undefined ? diseaseDetails.gfr_value : 35;
-      result = evaluateCKD(nutrition, weight, gfr);
-    }
-    // 갑상선: 완전 제외 (요오드 데이터 없음)
-
-    if (result) {
-      allWarnings.push(...result.warnings);
-      worstRank = Math.max(
-        worstRank,
-        LEVEL_RANK[
-          result.verdict === "비추천"
-            ? "high"
-            : result.verdict === "주의"
-              ? "mid"
-              : "low"
-        ],
-      );
-    }
+  if (hasType2) {
+    const mlResult = await callML(nutrition);
+    giCategory = mlResult.gi_category; // "Low" | "Medium" | "High"
+    worstRank = Math.max(worstRank, VERDICT_RANK[verdictFromGi(giCategory)]);
+    evaluatedDiseases.unshift("2형 당뇨");
   }
-
-  const verdict =
-    worstRank === 2 ? "비추천" : worstRank === 1 ? "주의" : "추천";
 
   return {
-    diseaseTrack: "rule",
-    verdict,
-    giCategory: null,
-    warnings: allWarnings,
+    diseaseTrack: hasType2 ? "diabetes" : "rule",
+    verdict: VERDICT_BY_RANK[worstRank],
+    giCategory,
+    warnings: rules.warnings,
+    evaluations: rules.evaluations,
     nutrition,
-    bmi: bmi.toFixed(1),
+    bmi: Number.isFinite(bmi) ? bmi.toFixed(1) : null,
+    evaluatedDiseases,
+    unsupportedDiseases: rules.unsupported,
   };
 }
 
@@ -602,4 +678,10 @@ module.exports = {
   scoreForDiseaseUser,
   scoreForHealthyUser,
   getDailyReference,
+  // 테스트/내부 재사용용
+  MlServiceError,
+  callMLService,
+  evaluateRuleDiseases,
+  evaluateDyslipidemia,
+  combineResults,
 };

@@ -1,115 +1,89 @@
 /**
  * user.js
  *
- * 역할: GET/PUT /users/:id 엔드포인트
+ * 역할: 로그인한 사용자의 프로필 조회/수정
  *
- * GET /users/:id  → 사용자 정보 반환 (질병 심각도 컬럼 포함)
- * PUT /users/:id  → 사용자 정보 업데이트 (질병 심각도 컬럼 포함)
+ *   GET /users/me, GET /users/:id  → 프로필 반환 (질병 심각도 컬럼 포함)
+ *   PUT /users/me, PUT /users/:id  → 프로필 수정 (요청에 포함된 필드만 갱신)
+ *
+ * 보안: :id 는 로그인한 사용자 본인(req.user.id)일 때만 허용한다.
+ *       (다른 사용자의 건강 정보 조회/수정 방지)
  */
 
 const express = require("express");
-const router  = express.Router();
-const { getConnection } = require("../db/mysql");
+const {
+  validateProfile,
+  toColumnValues,
+  toPublicProfile,
+} = require("../services/profileService");
 
-// ── GET /users/:id ────────────────────────────────────────────
-router.get("/:id", async (req, res) => {
+/**
+ * 경로의 :id 를 본인 id 로 해석한다. 본인이 아니면 null.
+ */
+function resolveOwnId(req) {
   const { id } = req.params;
+  if (id === "me") return req.user.id;
+  if (!/^\d+$/.test(id)) return null;
+  return Number(id) === Number(req.user.id) ? Number(id) : null;
+}
 
-  try {
-    const db = await getConnection();
-    const [rows] = await db.execute("SELECT * FROM users WHERE id = ?", [id]);
-    await db.end();
+/**
+ * @param {{ db: { execute: Function } }} deps
+ */
+function createUserRouter({ db }) {
+  const router = express.Router();
 
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+  router.get("/:id", async (req, res) => {
+    const userId = resolveOwnId(req);
+    if (userId === null) {
+      return res.status(403).json({ message: "본인의 정보만 조회할 수 있습니다." });
     }
 
-    const user = rows[0];
+    try {
+      const [rows] = await db.execute("SELECT * FROM users WHERE id = ?", [userId]);
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+      }
+      res.json(toPublicProfile(rows[0]));
+    } catch (err) {
+      console.error("GET /users/:id 오류:", err);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  });
 
-    // diseases, allergens JSON 파싱
-    const diseases  = Array.isArray(user.diseases)
-      ? user.diseases
-      : JSON.parse(user.diseases  || "[]");
-    const allergens = Array.isArray(user.allergens)
-      ? user.allergens
-      : JSON.parse(user.allergens || "[]");
+  router.put("/:id", async (req, res) => {
+    const userId = resolveOwnId(req);
+    if (userId === null) {
+      return res.status(403).json({ message: "본인의 정보만 수정할 수 있습니다." });
+    }
 
-    res.json({
-      id:                 user.id,
-      name:               user.name,
-      age:                user.age,
-      weight:             user.weight,
-      height:             user.height,
-      gender:             user.gender,
-      diseases,
-      allergens,
-      // 질병 심각도 필드
-      hypertension_stage: user.hypertension_stage ?? 1,
-      ldl_value:          user.ldl_value  ?? null,
-      tg_value:           user.tg_value   ?? null,
-      hdl_value:          user.hdl_value  ?? null,
-      gfr_value:          user.gfr_value  ?? 35,
-    });
+    const { value, errors } = validateProfile(req.body);
+    if (errors.length > 0) {
+      return res.status(400).json({ message: errors[0] });
+    }
 
-  } catch (err) {
-    console.error("GET /users/:id 오류:", err);
-    res.status(500).json({ message: "서버 오류", error: err.message });
-  }
-});
+    const { columns, values } = toColumnValues(value);
+    if (columns.length === 0) {
+      return res.status(400).json({ message: "수정할 항목이 없습니다." });
+    }
 
-// ── PUT /users/:id ────────────────────────────────────────────
-router.put("/:id", async (req, res) => {
-  const { id } = req.params;
-  const {
-    name, age, weight, height, gender,
-    diseases, allergens,
-    hypertension_stage,
-    ldl_value, tg_value, hdl_value,
-    gfr_value,
-  } = req.body;
+    try {
+      // columns 는 profileService 의 화이트리스트에서만 나오므로 SQL 조각으로 사용해도 안전하다.
+      const [result] = await db.execute(
+        `UPDATE users SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`,
+        [...values, userId]
+      );
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+      }
+      res.json({ message: "저장 완료" });
+    } catch (err) {
+      console.error("PUT /users/:id 오류:", err);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  });
 
-  try {
-    const db = await getConnection();
+  return router;
+}
 
-    await db.execute(
-      `UPDATE users SET
-        name               = ?,
-        age                = ?,
-        weight             = ?,
-        height             = ?,
-        gender             = ?,
-        diseases           = ?,
-        allergens          = ?,
-        hypertension_stage = ?,
-        ldl_value          = ?,
-        tg_value           = ?,
-        hdl_value          = ?,
-        gfr_value          = ?
-       WHERE id = ?`,
-      [
-        name,
-        age,
-        weight,
-        height,
-        gender,
-        JSON.stringify(diseases  || []),
-        JSON.stringify(allergens || []),
-        hypertension_stage ?? 1,
-        ldl_value ?? null,
-        tg_value  ?? null,
-        hdl_value ?? null,
-        gfr_value ?? 35,
-        id,
-      ]
-    );
-
-    await db.end();
-    res.json({ message: "저장 완료" });
-
-  } catch (err) {
-    console.error("PUT /users/:id 오류:", err);
-    res.status(500).json({ message: "서버 오류", error: err.message });
-  }
-});
-
-module.exports = router;
+module.exports = createUserRouter;

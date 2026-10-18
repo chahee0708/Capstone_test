@@ -1,33 +1,15 @@
 // 서버 담당 파일
-// docker-compose.yml에서 환경변수를 이미 직접 넣어주고 있어서
-// dotenv 자체가 필요없음. 일단 주석 처리
-// require("dotenv").config();
+// 환경변수는 docker-compose.yml 에서 직접 주입한다 (dotenv 불필요).
+// 앱 조립은 app.js, 여기서는 실행만 담당한다.
 
-const express = require("express");
-const cors = require("cors");
-const cookieParser = require("cookie-parser");
-const recommendRouter = require("./routes/recommend");
-const userRouter = require("./routes/user");
-const authRouter = require("./routes/auth");
-const authMiddleware = require("./middleware/auth");
+const config = require("./config");
+const { createApp } = require("./app");
 
-const app = express();
+// 인증 시크릿 누락(운영 환경)은 서버 시작 단계에서 바로 드러나게 한다.
+void config.JWT_SECRET;
 
-app.use(cors({
-  origin: "http://localhost:5173",
-  credentials: true,
-}));
-app.use(express.json());
-app.use(cookieParser());
+const app = createApp();
 
-app.get("/", (req, res) => {
-  res.json({ message: "백엔드 서버 정상 작동 중!" });
-});
-
-app.use("/auth", authRouter);
-app.use("/recommend", authMiddleware, recommendRouter);
-app.use("/users", authMiddleware, userRouter);
-
-app.listen(4000, () => {
-  console.log("백엔드 서버 실행 중: http://localhost:4000");
+app.listen(config.PORT, () => {
+  console.log(`백엔드 서버 실행 중: http://localhost:${config.PORT}`);
 });
