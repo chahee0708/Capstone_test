@@ -3,16 +3,28 @@
  *
  * 역할: 음식 이름을 입력받아 백엔드(/recommend)에 분석 요청하고 결과를 표시하는 페이지
  *
- * 표시 구조 (결과가 있을 때):
- *   1. 판정 카드 (추천/주의/비추천)
- *      - 2형 당뇨 사용자: GI 지수 정보 포함
- *      - 다른 질병 사용자: 판정 라벨만 표시
- *   2. 판정 근거 줄글 (VerdictExplanation 컴포넌트)
- *   3. 영양소 균형 — 방사형 그래프 (NutrientRadarChart 컴포넌트)
- *   4. 영양 성분 분석 — 가로 막대 (KDRI 일반 성인 기준)-> 방사형 그래프와 일치하게 수정
- *   5. 알레르기 유발 성분 카드
+ * 쓰이는 곳: routes.ts 의 "/analysis" 경로 (홈 화면 링크로 진입)
  *
- * ── 이번 변경 요약 ───────────────────────────────────────────
+ * 표시 구조 (결과가 있을 때):
+ *   1. 판정 카드 (VerdictCard) — 판정 + 판정 근거 + 알레르기 배지/성분 상자
+ *      - 2형 당뇨 사용자: GI 지수 한 줄 추가
+ *   2. 대체음식 섹션 (AlternativesSection) — 응답에 alternatives 가 있을 때만
+ *   3. 영양 정보 슬라이드 카드 (NutritionSlideCard)
+ *      - 1페이지: 영양소 균형 (NutrientRadarChart)
+ *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
+ *
+ * ── 이번 변경(분석 페이지 개편) ──────────────────────────────
+ *   - 판정 카드 2종(GI 카드 / 일반 카드)을 VerdictCard 컴포넌트 하나로 합침
+ *   - 별도 알레르기 카드 삭제 → 판정 카드 안으로 이동 (배지 + 결론 문장 + 성분 상자)
+ *   - 응답 타입에 nutritionVerdict / allergens / allergyOverride / alternatives 추가
+ *   - 대체음식 섹션 틀 추가 (카드 클릭 → 그 음식 이름으로 이 페이지에서 바로 다시 분석)
+ *   - 레이더 카드와 영양성분 목록 카드를 슬라이드 카드 하나로 합침 (내용·계산은 그대로)
+ *   - handleAnalyze 가 음식 이름을 인자로 받을 수 있게 변경 (대체음식 클릭용)
+ *   - 바코드 기능 화면에서 삭제: 바코드 탭(스캔 안내·카메라 열기 버튼) 제거 → 검색 / OCR 2개 탭,
+ *     페이지 안내 문구에서 바코드 언급 제거
+ *   - 판정 카드에 key={productName} → 다른 제품을 분석하면 판정 카드 슬라이드가 1페이지부터
+ *
+ * ── 이전 변경 요약 ───────────────────────────────────────────
  * STEP 2: 세로 막대 그래프(recharts BarChart)를 NutrientRadarChart로 교체.
  *         가로 막대(Progress)는 그대로 유지.
  * STEP 3: 가로 막대 오른쪽 표기를 "60g / 422g (14%)" 형태로 변경.
@@ -21,20 +33,13 @@
  *         warnings 필드는 응답에 그대로 남아 있지만 화면에서는 쓰지 않는다.
  *
  * 호출하는 컴포넌트:
- *   - frontend/src/components/NutrientRadarChart.tsx
- *   - frontend/src/components/VerdictExplanation.tsx
+ *   - frontend/src/components/VerdictCard.tsx (안에서 VerdictExplanation 사용)
+ *   - frontend/src/components/AlternativesSection.tsx
+ *   - frontend/src/components/NutritionSlideCard.tsx (안에서 NutrientRadarChart, NutritionBreakdownList 사용)
  */
 import { useRef, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import {
-  Search,
-  ScanBarcode,
-  Camera,
-  AlertCircle,
-  CheckCircle,
-  AlertTriangle,
-  TrendingUp,
-} from "lucide-react";
+import { Search, Camera, AlertCircle } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card } from "../components/ui/card";
@@ -44,19 +49,14 @@ import {
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
-import { Progress } from "../components/ui/progress";
-import { Badge } from "../components/ui/badge";
-// 세로 막대 그래프를 방사형 그래프로 교체했기 때문에 recharts를 여기서 직접 쓰지 않는다
-// (차트 관련 import는 NutrientRadarChart.tsx 안으로 옮겨졌다)
+import { type RadarAxis } from "../../components/NutrientRadarChart";
+import { type Reason, type CarbInfo } from "../../components/VerdictExplanation";
+import { VerdictCard } from "../../components/VerdictCard";
 import {
-  NutrientRadarChart,
-  type RadarAxis,
-} from "../../components/NutrientRadarChart";
-import {
-  VerdictExplanation,
-  type Reason,
-  type CarbInfo,
-} from "../../components/VerdictExplanation";
+  AlternativesSection,
+  type Alternative,
+} from "../../components/AlternativesSection";
+import { NutritionSlideCard } from "../../components/NutritionSlideCard";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";//백엔드 로컬호스트 값
 
@@ -68,7 +68,10 @@ type AnalysisResult = {
   productName: string;
   userType: string;
   diseaseTrack: "diabetes" | "rule" | "healthy";
+  // 최종 판정 (알레르기 성분이 있으면 항상 "비추천")
   verdict: "추천" | "주의" | "비추천";
+  // 알레르기 적용 전 영양 판정
+  nutritionVerdict?: "추천" | "주의" | "비추천";
   giCategory: "Low" | "Medium" | "High" | null;
   bmi: string;
   nutrition: {
@@ -87,7 +90,14 @@ type AnalysisResult = {
   radar: RadarAxis[];
   // 1형 당뇨 사용자에게만 값이 들어온다. 그 외에는 null
   carbInfo: CarbInfo | null;
+  // 예전 필드 (allergens 와 같은 값). 구버전 응답 대비로 남겨 둔다
   allergenAlert: string[];
+  // 걸린 알레르기 이름 배열 (없으면 []). 예) ["우유", "갑각류(새우)"]
+  allergens?: string[];
+  // 알레르기 때문에 "비추천" 으로 강제됐는지
+  allergyOverride?: boolean;
+  // 대체음식 (다음 단계에서 백엔드가 보냄. 필드가 없으면 섹션을 숨긴다)
+  alternatives?: Alternative[];
   // 성별+나이 기반 KDRI 1일 기준값 (프론트 차트 max값으로 사용)
   // 예: 남성 25세 → { 나트륨: 2300, 당류: 130, 탄수화물: 130, 단백질: 65, 식이섬유: 30 }
   dailyReference: {
@@ -99,43 +109,6 @@ type AnalysisResult = {
     단백질: number;
     식이섬유: number;
   };
-};
-
-/**
- * GI Category별 카드 스타일 설정
- * giCategory 값으로 바로 조회해서 사용
- */
-const GI_CONFIG = {
-  Low: {
-    color: "text-emerald-600",
-    bg: "bg-emerald-50",
-    border: "border-emerald-300",
-    icon: CheckCircle,
-    label: "GI 지수 낮음",
-    verdict: "추천",
-    verdictColor: "text-emerald-600",
-    desc: "혈당 영향이 적습니다",
-  },
-  Medium: {
-    color: "text-amber-600",
-    bg: "bg-amber-50",
-    border: "border-amber-300",
-    icon: AlertTriangle,
-    label: "GI 지수 중간",
-    verdict: "주의",
-    verdictColor: "text-amber-600",
-    desc: "적당량 섭취를 권장합니다",
-  },
-  High: {
-    color: "text-red-600",
-    bg: "bg-red-50",
-    border: "border-red-300",
-    icon: AlertCircle,
-    label: "GI 지수 높음",
-    verdict: "비추천",
-    verdictColor: "text-red-600",
-    desc: "혈당이 빠르게 오를 수 있습니다",
-  },
 };
 
 export function FoodAnalysisPage() {
@@ -182,9 +155,11 @@ export function FoodAnalysisPage() {
   };
   /**
    * 분석 버튼 클릭 또는 Enter 입력 시 실행
+   * foodName 을 넘기면 입력칸 대신 그 이름으로 분석한다 (대체음식 카드 클릭용)
    */
-  const handleAnalyze = async () => {
-    if (!searchQuery.trim()) return;
+  const handleAnalyze = async (foodName?: string) => {
+    const name = (foodName ?? searchQuery).trim();
+    if (!name) return;
     setIsAnalyzing(true);
     setShowResults(false);
     setErrorMessage("");
@@ -197,7 +172,7 @@ export function FoodAnalysisPage() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ foodName: searchQuery, userId: user?.id ?? 1 }),
+        body: JSON.stringify({ foodName: name, userId: user?.id ?? 1 }),
       });
 
       if (!response.ok) {
@@ -218,25 +193,33 @@ export function FoodAnalysisPage() {
     }
   };
 
+  /**
+   * 대체음식 카드 클릭 시: 검색해서 분석하는 것과 같은 방식으로 이 페이지에서 바로 분석
+   * (입력칸에 이름을 채우고 분석 → 화면 맨 위로 이동)
+   */
+  const handleSelectAlternative = (name: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSearchQuery(name);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    handleAnalyze(name);
+  };
+
   return (
     <div className="min-h-full bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
           <h1 className="text-2xl md:text-3xl font-bold mb-2">식품 분석</h1>
           <p className="text-gray-600">
-            제품명을 검색하거나 바코드를 스캔하여 분석하세요
+            제품명을 검색하거나 영양성분표를 촬영하여 분석하세요
           </p>
         </div>
 
         <Tabs defaultValue="search" className="mb-8">
-          <TabsList className="grid w-full grid-cols-3">
+          {/* 바코드 탭 삭제 → 검색 / OCR 2칸 */}
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="search">
               <Search className="w-4 h-4 mr-2" />
               검색
-            </TabsTrigger>
-            <TabsTrigger value="barcode">
-              <ScanBarcode className="w-4 h-4 mr-2" />
-              바코드
             </TabsTrigger>
             <TabsTrigger value="ocr">
               <Camera className="w-4 h-4 mr-2" />
@@ -277,7 +260,7 @@ export function FoodAnalysisPage() {
                   )}
                 </div>
                 <Button
-                  onClick={handleAnalyze}
+                  onClick={() => handleAnalyze()}
                   disabled={isAnalyzing}
                   className="bg-emerald-600 hover:bg-emerald-700"
                 >
@@ -293,14 +276,6 @@ export function FoodAnalysisPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="barcode">
-            <Card className="p-12 text-center">
-              <ScanBarcode className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-              <p className="text-gray-600 mb-4">바코드를 스캔하세요</p>
-              <Button variant="outline">카메라 열기</Button>
-            </Card>
-          </TabsContent>
-
           <TabsContent value="ocr">
             <Card className="p-12 text-center">
               <Camera className="w-16 h-16 mx-auto mb-4 text-gray-400" />
@@ -310,195 +285,45 @@ export function FoodAnalysisPage() {
           </TabsContent>
         </Tabs>
 
-        {showResults &&
-          analysisResult &&
-          (() => {
-            // 영양 성분 목록도 레이더 그래프와 같은 기준(백엔드 radar)을 사용한다
-            const nutritionData = (analysisResult.radar ?? []).map((d) => ({
-              name: d.nutrient,
-              value: d.amountPer100g,
-              max: d.dailyLimit,
-              unit: d.unit,
-            }));
+        {showResults && analysisResult && (() => {
+          // 걸린 알레르기: 새 필드 allergens, 없으면 예전 필드 allergenAlert
+          const allergens =
+            analysisResult.allergens ?? analysisResult.allergenAlert ?? [];
 
-            const giConfig = analysisResult.giCategory
-              ? GI_CONFIG[analysisResult.giCategory]
-              : null;
+          return (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* ── 1. 판정 카드 (알레르기 배지·결론·성분 상자 포함) ── */}
+              {/* key: 제품이 바뀌면 판정 카드 슬라이드도 1페이지부터 */}
+              <VerdictCard
+                key={analysisResult.productName}
+                productName={analysisResult.productName}
+                verdict={analysisResult.verdict}
+                nutritionVerdict={analysisResult.nutritionVerdict}
+                giCategory={analysisResult.giCategory}
+                reasons={analysisResult.reasons ?? []}
+                carbInfo={analysisResult.carbInfo}
+                allergens={allergens}
+              />
 
-            return (
-              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* ── 카드 1: 2형 당뇨 → GI 지수 + 판정 ── */}
-                {giConfig &&
-                  (() => {
-                    const GIIcon = giConfig.icon;
-                    return (
-                      <Card
-                        className={`p-6 border-2 ${giConfig.border} ${giConfig.bg}`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <GIIcon className={`w-10 h-10 ${giConfig.color}`} />
-                          <div>
-                            <p className="text-sm text-gray-500 mb-1">
-                              {analysisResult.productName}
-                            </p>
-                            <h2
-                              className={`text-2xl font-bold ${giConfig.verdictColor}`}
-                            >
-                              {giConfig.verdict}
-                            </h2>
-                            <p className={`text-sm mt-1 ${giConfig.color}`}>
-                              {giConfig.label} — {giConfig.desc}
-                            </p>
-                          </div>
-                        </div>
-                        {/* 판정 근거를 판정 카드 안에 함께 표시 */}
-                        <div className="mt-2 pt-4 border-t border-black/10">
-                          <VerdictExplanation
-                            reasons={analysisResult.reasons ?? []}
-                            carbInfo={analysisResult.carbInfo}
-                          />
-                        </div>
-                      </Card>
-                    );
-                  })()}
+              {/* ── 2. 대체음식 섹션: 응답에 alternatives 가 있을 때만 (지금은 백엔드가 안 보내서 숨김) ── */}
+              {Array.isArray(analysisResult.alternatives) && (
+                <AlternativesSection
+                  alternatives={analysisResult.alternatives}
+                  onSelect={handleSelectAlternative}
+                />
+              )}
 
-                {/* ── 카드 1-b: 다른 질병 → 판정 라벨만 표시 ── */}
-                {!giConfig && analysisResult.verdict && (
-                  <Card
-                    className={`p-6 border-2 ${
-                      analysisResult.verdict === "추천"
-                        ? "border-emerald-300 bg-emerald-50"
-                        : analysisResult.verdict === "주의"
-                          ? "border-amber-300 bg-amber-50"
-                          : "border-red-300 bg-red-50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      {analysisResult.verdict === "추천" ? (
-                        <CheckCircle className="w-10 h-10 text-emerald-600" />
-                      ) : analysisResult.verdict === "주의" ? (
-                        <AlertTriangle className="w-10 h-10 text-amber-600" />
-                      ) : (
-                        <AlertCircle className="w-10 h-10 text-red-600" />
-                      )}
-                      <div>
-                        <p className="text-sm text-gray-500 mb-1">
-                          {analysisResult.productName}
-                        </p>
-                        <h2
-                          className={`text-2xl font-bold ${
-                            analysisResult.verdict === "추천"
-                              ? "text-emerald-600"
-                              : analysisResult.verdict === "주의"
-                                ? "text-amber-600"
-                                : "text-red-600"
-                          }`}
-                        >
-                          {analysisResult.verdict}
-                        </h2>
-                      </div>
-                    </div>
-                    {/* 판정 근거를 판정 카드 안에 함께 표시 */}
-                    <div className="mt-2 pt-4 border-t border-black/10">
-                      <VerdictExplanation
-                        reasons={analysisResult.reasons ?? []}
-                        carbInfo={analysisResult.carbInfo}
-                      />
-                    </div>
-                  </Card>
-                )}
-
-                {/* ── 카드 3: 영양소 균형 (방사형 그래프) ──
-                    기존 세로 막대 그래프 자리를 대체한다 */}
-                <Card className="p-6">
-                  <NutrientRadarChart
-                    data={analysisResult.radar ?? []}
-                    calories={analysisResult.nutrition.calories}
-                    isMlTrack={analysisResult.diseaseTrack === "diabetes"}
-                  />
-                </Card>
-
-                {/* ── 카드 4: 영양 성분 분석 (가로 막대, 일반 기준) ── */}
-                <Card className="p-6">
-                  <h3 className="font-semibold mb-1 flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-emerald-600" />
-                    영양 성분 분석
-                  </h3>
-                  {/* 기준값 출처 표시 — 위 방사형 그래프(내 질병 기준)와 구분되도록 명시 */}
-                  <p className="text-xs text-gray-400 mb-4">
-                    기준: 내 건강 정보에 따른 1일 한도 (질병 기준이 없는
-                    영양소는 KDRI)
-                  </p>
-                  <div className="space-y-4">
-                    {nutritionData.map((item, index) => {
-                      // 100g 섭취 시 1일 권장량의 몇 %인지
-                      const percent = Math.round((item.value / item.max) * 100);
-                      return (
-                        <div key={index}>
-                          <div className="flex justify-between items-center mb-2">
-                            <span className="text-sm font-medium">
-                              {item.name}
-                            </span>
-                            {/* g과 % 를 함께 표기: 예) 60g / 422g (14%) */}
-                            <span className="text-sm text-gray-600">
-                              {item.value}
-                              {item.unit} / {item.max}
-                              {item.unit} ({percent}%)
-                            </span>
-                          </div>
-                          {/* Progress는 100을 넘으면 꽉 찬 상태로 보이므로 값을 100에서 자른다 */}
-                          <Progress
-                            value={Math.min(percent, 100)}
-                            className="h-2"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-gray-400 mt-4">
-                    괄호 안 %는 이 제품을 100g 섭취했을 때 1일 한도 대비
-                    비율입니다.
-                  </p>
-                </Card>
-
-                {/* ── 카드 5: 알레르기 유발 성분 ── */}
-                {analysisResult.allergenAlert !== null &&
-                  analysisResult.allergenAlert !== undefined && (
-                    <Card className="p-6">
-                      <h3 className="font-semibold mb-4 flex items-center gap-2">
-                        <AlertCircle className="w-5 h-5 text-amber-600" />
-                        알레르기 유발 성분
-                      </h3>
-                      {analysisResult.allergenAlert.length > 0 ? (
-                        <>
-                          <p className="text-sm text-red-600 mb-3">
-                            이 제품에 알레르기 유발 성분이 포함되어 있습니다.
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {analysisResult.allergenAlert.map((a, i) => (
-                              <Badge
-                                key={i}
-                                className="bg-red-100 text-red-700 border border-red-300"
-                              >
-                                <AlertTriangle className="w-3 h-3 mr-1" />
-                                {a}
-                              </Badge>
-                            ))}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex items-center gap-2 text-emerald-600">
-                          <CheckCircle className="w-5 h-5" />
-                          <p className="text-sm font-medium">
-                            이 제품에 알레르기 유발 성분이 없습니다.
-                          </p>
-                        </div>
-                      )}
-                    </Card>
-                  )}
-              </div>
-            );
-          })()}
+              {/* ── 3. 영양 정보 슬라이드 카드 (1페이지 영양소 균형 / 2페이지 영양성분 분석) ──
+                  key 로 제품이 바뀌면 1페이지부터 다시 보이게 한다 */}
+              <NutritionSlideCard
+                key={analysisResult.productName}
+                radar={analysisResult.radar ?? []}
+                calories={analysisResult.nutrition.calories}
+                isMlTrack={analysisResult.diseaseTrack === "diabetes"}
+              />
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

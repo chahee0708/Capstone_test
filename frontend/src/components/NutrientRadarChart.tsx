@@ -12,7 +12,11 @@
  *   백엔드 응답의 radar 배열 (backend/services/scoreService.js의 buildRadar 함수가 생성)
  *
  * 호출하는 곳:
- *   frontend/src/app/pages/FoodAnalysisPage.tsx (세로 막대 그래프 자리를 대체)
+ *   frontend/src/components/NutritionSlideCard.tsx (영양 정보 슬라이드 카드 1페이지)
+ *
+ * 이번에 바뀐 점:
+ *   - hideHeader 옵션 추가: 슬라이드 카드가 제목·kcal 배지를 공통으로 그리므로 여기서는 숨긴다.
+ *     그래프·범례·축별 기준과 계산은 그대로.
  *
  * 사용 라이브러리:
  *   recharts 2.15.2 — 기존 프로젝트에 이미 설치된 것과 동일 (새로 설치한 패키지 없음)
@@ -57,9 +61,11 @@ type Props = {
   calories: number;
   /** 판정이 2형 당뇨 ML 트랙인지 여부 → 추가 안내 문구 표시용 */
   isMlTrack: boolean;
+  /** true 면 제목 + 열량 배지 줄을 그리지 않는다 (슬라이드 카드에서 공통 제목 사용) */
+  hideHeader?: boolean;
 };
 
-export function NutrientRadarChart({ data, calories, isMlTrack }: Props) {
+export function NutrientRadarChart({ data, calories, isMlTrack, hideHeader = false }: Props) {
   // 데이터가 없으면 아무것도 그리지 않는다 (백엔드 구버전 응답 대비)
   if (!data || data.length === 0) return null;
 
@@ -126,13 +132,15 @@ export function NutrientRadarChart({ data, calories, isMlTrack }: Props) {
 
   return (
     <div>
-      {/* ── 제목 + 열량 배지 ── */}
-      <div className="flex items-center gap-2 mb-1 flex-wrap">
-        <h3 className="font-semibold">영양소 균형</h3>
-        <span className="text-xs font-medium bg-gray-100 text-gray-700 rounded-full px-2.5 py-1">
-          {calories} kcal / 100g
-        </span>
-      </div>
+      {/* ── 제목 + 열량 배지 (슬라이드 카드에서는 숨김) ── */}
+      {!hideHeader && (
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <h3 className="font-semibold">영양소 균형</h3>
+          <span className="text-xs font-medium bg-gray-100 text-gray-700 rounded-full px-2.5 py-1">
+            {calories} kcal / 100g
+          </span>
+        </div>
+      )}
 
       {/* ── 기준 안내 ── */}
       <p className="text-xs text-gray-400">

@@ -16,7 +16,20 @@
  *   (backend/services/scoreService.js의 combineResults, scoreForDiseaseUser가 생성)
  *
  * 호출하는 곳:
- *   frontend/src/app/pages/FoodAnalysisPage.tsx (노란 "주의 영양소" 박스 자리를 대체)
+ *   frontend/src/components/VerdictCard.tsx (판정 카드 안, FoodAnalysisPage.tsx 결과 화면)
+ *
+ * ── 이번 변경(알레르기 우선 규칙) ─────────────────────────────
+ *   allergyMode(알레르기 성분 있음)일 때만 문장 구성이 바뀐다. 아니면 기존과 똑같다.
+ *     1) 맨 위 굵은 빨간 결론: "등록하신 알레르기 성분이 들어 있어 비추천합니다."
+ *     2) 영양 판정(nutritionVerdict, 알레르기 적용 전)이 "추천"이면
+ *        "알레르기가 없다면 영양상으로는 괜찮은 식품이에요." 한 줄만 표시
+ *     3) 그 외에는 기존 영양 결론·설명을 그대로 보여주되 결론 문장 앞에 "또한 " 을 붙인다
+ *        (영양 결론은 원래부터 reasons(영양 판정 근거)로 만들어져 최종 verdict 의 영향을 받지 않는다)
+ *
+ * ── 이번 변경(판정 카드 슬라이드) ─────────────────────────────
+ *   - hideHeader 옵션 추가: 판정 카드가 슬라이드(SlidePager) 제목 줄에 "판정 근거" 를 그릴 때
+ *     여기서는 제목을 숨긴다. 알레르기가 없을 때는 제목 포함 기존 그대로.
+ *   - 알레르기 + 영양 추천 문구를 "알레르기가 없다면 영양상으로는 괜찮은 식품이에요." 로 변경
  */
 
 import { AlertTriangle, Info } from "lucide-react";
@@ -98,19 +111,62 @@ function ratioText(amount: number, threshold: number): string {
 type Props = {
   reasons: Reason[];
   carbInfo?: CarbInfo | null;
+  /** 알레르기 성분이 있어 최종 판정이 비추천으로 강제된 경우 true */
+  allergyMode?: boolean;
+  /** 알레르기 적용 전 영양 판정 (allergyMode 일 때 문장 선택에 사용) */
+  nutritionVerdict?: "추천" | "주의" | "비추천";
+  /** true 면 "판정 근거" 제목 줄을 그리지 않는다 (판정 카드 슬라이드 제목 줄을 대신 사용) */
+  hideHeader?: boolean;
 };
 
-export function VerdictExplanation({ reasons, carbInfo }: Props) {
+// 알레르기 모드 맨 위 결론 문장 (굵은 빨강)
+const ALLERGY_CONCLUSION = "등록하신 알레르기 성분이 들어 있어 비추천합니다.";
+
+export function VerdictExplanation({
+  reasons,
+  carbInfo,
+  allergyMode = false,
+  nutritionVerdict,
+  hideHeader = false,
+}: Props) {
   const list = reasons ?? [];
+
+  // "판정 근거" 제목 줄 (아이콘 색만 상황에 따라 다름). hideHeader 면 그리지 않는다
+  const header = (icon: "info" | "warn", mb: string) =>
+    hideHeader ? null : (
+      <h3 className={`font-semibold ${mb} flex items-center gap-2`}>
+        {icon === "info" ? (
+          <Info className="w-5 h-5 text-emerald-600" />
+        ) : (
+          <AlertTriangle className="w-5 h-5 text-amber-600" />
+        )}
+        판정 근거
+      </h3>
+    );
+
+  // ── 알레르기 모드 + 영양 기준으로는 추천인 경우: 결론 2줄만 ──
+  if (allergyMode && nutritionVerdict === "추천") {
+    return (
+      <div>
+        {header("warn", "mb-3")}
+        <p className="text-sm font-bold text-red-700 mb-2">{ALLERGY_CONCLUSION}</p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          알레르기가 없다면 영양상으로는 괜찮은 식품이에요.
+        </p>
+        {carbInfo && <CarbInfoParagraph carbInfo={carbInfo} />}
+      </div>
+    );
+  }
 
   // ── 주의가 필요한 영양소가 하나도 없는 경우 ──────────────
   if (list.length === 0) {
     return (
       <div>
-        <h3 className="font-semibold mb-2 flex items-center gap-2">
-          <Info className="w-5 h-5 text-emerald-600" />
-          판정 근거
-        </h3>
+        {header("info", "mb-2")}
+        {/* 알레르기 모드: 알레르기 결론을 먼저 */}
+        {allergyMode && (
+          <p className="text-sm font-bold text-red-700 mb-2">{ALLERGY_CONCLUSION}</p>
+        )}
         <p className="text-sm text-gray-700 leading-relaxed">
           현재 등록된 건강 정보 기준으로 주의가 필요한 영양소가 없습니다.
         </p>
@@ -149,10 +205,12 @@ export function VerdictExplanation({ reasons, carbInfo }: Props) {
 
   return (
     <div>
-      <h3 className="font-semibold mb-3 flex items-center gap-2">
-        <AlertTriangle className="w-5 h-5 text-amber-600" />
-        판정 근거
-      </h3>
+      {header("warn", "mb-3")}
+
+      {/* 알레르기 모드: 알레르기 결론을 맨 위에 */}
+      {allergyMode && (
+        <p className="text-sm font-bold text-red-700 mb-3">{ALLERGY_CONCLUSION}</p>
+      )}
 
       <div className="space-y-4">
         {groups.map((g) => {
@@ -161,14 +219,14 @@ export function VerdictExplanation({ reasons, carbInfo }: Props) {
             ? "비추천"
             : "주의";
 
-          // ① 결론 문장
-          const conclusion = g.disease
+          // ① 결론 문장 (알레르기 모드에서는 앞에 "또한 ")
+          const conclusion = (allergyMode ? "또한 " : "") + (g.disease
             ? `이 제품은 ${josa(g.disease, "이", "가")} 있는 분께 ${
                 worst === "비추천" ? "비추천합니다" : "주의가 필요합니다"
               }.`
             : `이 제품은 일반 성인 기준으로 ${
                 worst === "비추천" ? "비추천합니다" : "주의가 필요합니다"
-              }.`;
+              }.`);
 
           return (
             <div key={g.key} className="">

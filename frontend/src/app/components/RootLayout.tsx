@@ -1,5 +1,16 @@
+/**
+ * RootLayout.tsx
+ *
+ * 역할: 로그인한 사용자용 공통 레이아웃. 상단 헤더(로고·메뉴·로그아웃) + 페이지 내용(Outlet).
+ *       로그인하지 않았으면 /login 으로 보낸다.
+ *
+ * 이번에 바뀐 점:
+ *   - 바코드 기능 삭제에 맞춰 "분석" 메뉴 아이콘을 바코드(ScanBarcode) → 검색(Search) 으로 변경
+ *
+ * 쓰이는 곳: routes.ts 에서 "/" 아래 모든 페이지(홈·분석·프로필)를 감싼다
+ */
 import { Outlet, Link, useLocation, Navigate } from "react-router";
-import { Home, ScanBarcode, User, Heart, LogOut } from "lucide-react";
+import { Home, Search, User, Heart, LogOut } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
 export function RootLayout() {
@@ -12,7 +23,7 @@ export function RootLayout() {
 
   const navItems = [
     { path: "/", icon: Home, label: "홈" },
-    { path: "/analysis", icon: ScanBarcode, label: "분석" },
+    { path: "/analysis", icon: Search, label: "분석" }, // 바코드 기능 삭제로 아이콘을 검색으로 변경
     { path: "/profile", icon: User, label: "프로필" },
   ];
 

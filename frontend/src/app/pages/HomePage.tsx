@@ -1,16 +1,21 @@
+/**
+ * HomePage.tsx
+ *
+ * 역할: 로그인 후 첫 화면. 서비스 소개(히어로) + 분석 방법 소개 카드.
+ *
+ * 이번에 바뀐 점:
+ *   - 바코드 기능 삭제: "바코드 스캔" 소개 카드 제거, 시작 버튼 아이콘을 바코드 → 검색 아이콘으로 변경
+ *   - 소개 카드가 2개가 되어 큰 화면에서 3칸 중 1칸이 비지 않도록 2칸 그리드 + 가운데 정렬로 변경
+ *
+ * 쓰이는 곳: routes.ts 의 "/" (index) 경로
+ */
 import { Link } from "react-router";
-import { ScanBarcode, Search, Camera, Sparkles } from "lucide-react";
+import { Search, Camera, Sparkles } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 
 export function HomePage() {
   const features = [
-    {//바코드 삭제 -. 
-      icon: ScanBarcode,
-      title: "바코드 스캔",
-      description: "제품 바코드를 스캔하여 즉시 분석",
-      color: "from-emerald-500 to-teal-500",
-    },
     {
       icon: Search,
       title: "제품명 검색",
@@ -48,7 +53,7 @@ export function HomePage() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link to="/analysis">
                 <Button size="lg" className="bg-emerald-600 hover:bg-emerald-700 w-full sm:w-auto">
-                  <ScanBarcode className="w-5 h-5 mr-2" />
+                  <Search className="w-5 h-5 mr-2" />
                   지금 분석 시작하기
                 </Button>
               </Link>
@@ -73,7 +78,8 @@ export function HomePage() {
             <h2 className="text-2xl md:text-3xl font-bold mb-4">다양한 분석 방법</h2>
             <p className="text-gray-600">편한 방법으로 식품 정보를 입력하세요</p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* 분석 방법 소개 카드 (검색 / OCR) — 2칸, 가운데 정렬 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-3xl mx-auto">
             {features.map((feature, index) => {
               const Icon = feature.icon;
               return (
