@@ -11,12 +11,21 @@
  *      질병 없음 → scoreForHealthyUser로 판정 (KDRI 일반인 기준치)
  *   4. 알레르기 있는 유저만 allergyService 호출
  *   5. 알레르기 성분이 1개 이상이면 최종 verdict 를 "비추천" 으로 강제
- *   6. 최종 JSON 응답 (dailyReference 포함)
+ *   6. 최종 판정이 주의/비추천이면 대체음식 추천 (alternativeService)
+ *   7. 최종 JSON 응답 (dailyReference 포함)
  *
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(알레르기 우선 규칙) ─────────────────────────────
+ * ── 이번 변경(대체음식 추천) ──────────────────────────────────
+ *   - 최종 판정이 끝난 뒤 findAlternatives 호출 → 응답에 alternatives 필드 추가
+ *       최종 verdict 가 "주의"/"비추천" 일 때만 필드를 넣는다 ("추천" 이면 필드 자체가 없음 → 프론트 섹션 숨김)
+ *       대체음식 처리에서 예외가 나도 분석 응답은 실패시키지 않고 alternatives: [] 로 보낸다
+ *       처리 시간(ms)을 서버 로그에 출력
+ *   - diseaseDetails 를 if 블록 밖으로 옮김 (대체음식 후보 재판정에도 같은 값을 넘기기 위해)
+ *   - 기존 응답 필드는 이름·형식 그대로
+ *
+ * ── 이전 변경(알레르기 우선 규칙) ─────────────────────────────
  *   - 알레르기 성분이 있으면 질환/ML/무질환 판정과 관계없이 verdict = "비추천"
  *   - 응답 필드 추가 (기존 필드 이름·형식은 그대로)
  *       allergens        : 걸린 알레르기 이름 배열 (없으면 [])
@@ -43,6 +52,7 @@ const {
   getDisplayDailyReference,
 } = require("../services/scoreService");
 const { checkAllergens } = require("../services/allergyService");
+const { findAlternatives } = require("../services/alternativeService");
 
 router.post("/", async (req, res) => {
   const { foodName, userId } = req.body;
@@ -85,19 +95,20 @@ router.post("/", async (req, res) => {
 
     const hasDiseases = diseases.length > 0;
 
+    // 질병 심각도 정보 묶음 → scoreService로 한꺼번에 전달
+    // [변경] if 블록 밖으로 이동: 대체음식 후보 재판정에도 같은 값을 쓴다 (값 계산은 그대로)
+    const diseaseDetails = {
+      hypertension_stage: user.hypertension_stage || 1,
+      ldl_value: user.ldl_value ?? null,
+      tg_value: user.tg_value ?? null,
+      hdl_value: user.hdl_value ?? null,
+      gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
+    };
+
     // ── Step 2~4. scoreService로 판정 ─────────────────────────
     let result;
 
     if (hasDiseases) {
-      // 질병 심각도 정보 묶음 → scoreService로 한꺼번에 전달
-      const diseaseDetails = {
-        hypertension_stage: user.hypertension_stage || 1,
-        ldl_value: user.ldl_value ?? null,
-        tg_value: user.tg_value ?? null,
-        hdl_value: user.hdl_value ?? null,
-        gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
-      };
-
       result = await scoreForDiseaseUser(
         session,
         foodName,
@@ -137,6 +148,42 @@ router.post("/", async (req, res) => {
     const allergyOverride = foundAllergens.length > 0;
     const finalVerdict = allergyOverride ? "비추천" : nutritionVerdict;
 
+    // ── Step 5-2. 대체음식 추천 (최종 판정이 주의/비추천일 때만) ──────
+    // alternatives 가 undefined 면 응답에 필드를 넣지 않는다 → 프론트에서 섹션이 안 보임
+    let alternatives;
+    if (finalVerdict === "주의" || finalVerdict === "비추천") {
+      const startedAt = Date.now();
+      try {
+        alternatives = await findAlternatives(
+          session,
+          foodName,
+          {
+            diseases,
+            allergens,
+            weight: user.weight,
+            height: user.height,
+            age: user.age,
+            gender: user.gender,
+            diseaseDetails,
+          },
+          {
+            verdict: finalVerdict,
+            nutritionVerdict,
+            allergyOverride,
+            reasons: result.reasons,
+            nutrition: result.nutrition,
+          },
+        );
+      } catch (err) {
+        // 대체음식 때문에 분석 응답 전체가 실패하면 안 된다 → 빈 배열로 보내고 로그만
+        console.error("[대체음식] 처리 실패:", err);
+        alternatives = [];
+      }
+      console.log(
+        `[대체음식] ${foodName}: ${alternatives.length}개, ${Date.now() - startedAt}ms`,
+      );
+    }
+
     // ── Step 6. KDRI 1일 기준값 → 프론트 가로 막대 차트 max값에 사용 ────
     // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
     const dailyReference = getDisplayDailyReference(user.gender, user.age);
@@ -159,6 +206,8 @@ router.post("/", async (req, res) => {
       allergens: foundAllergens, // 걸린 알레르기 이름 배열 (없으면 [])
       allergyOverride, // 알레르기 때문에 "비추천" 으로 강제됐는지
       dailyReference,
+      // 대체음식: 최종 판정이 주의/비추천일 때만 필드가 생긴다
+      ...(alternatives !== undefined && { alternatives }),
     });
   } catch (err) {
     console.error("서버 오류:", err);

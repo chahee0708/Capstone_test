@@ -8,6 +8,7 @@ load_foods.py — 정제된 식품 데이터를 Neo4j 에 적재하는 스크립
     - Allergy 노드   : allergen_list 로 CONTAINS_ALLERGEN 관계 생성, group 은 allergen_groups.csv 값
     기존 BELONGS_TO(Category), HAS_NUTRIENT 관계와 이번 CSV 에 없는 Food 노드는 건드리지 않는다.
     같은 CSV 로 여러 번 실행해도 결과가 같다 (관계는 매번 지우고 다시 만든다).
+    [추가] --apply 시 Food.category_mid 인덱스도 생성한다 (대체음식 추천 후보 조회용)
 
 [입력] (data_pipeline/clean/)
     - foods_clean.csv     : clean_foods.py 출력
@@ -54,6 +55,12 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT food_report_no IF NOT EXISTS FOR (f:Food) REQUIRE f.report_no IS UNIQUE",
     "CREATE CONSTRAINT ingredient_name IF NOT EXISTS FOR (i:Ingredient) REQUIRE i.name IS UNIQUE",
     "CREATE CONSTRAINT allergy_name IF NOT EXISTS FOR (a:Allergy) REQUIRE a.name IS UNIQUE",
+]
+
+# [추가] 일반 인덱스: 중복 값이 있어도 만들 수 있으므로 제약조건과 달리 항상 생성
+#   Food.category_mid → 대체음식 추천에서 같은 중분류 후보를 찾을 때 사용 (backend alternativeService.js)
+INDEXES = [
+    "CREATE INDEX food_category_mid IF NOT EXISTS FOR (f:Food) ON (f.category_mid)",
 ]
 
 
@@ -242,6 +249,12 @@ def apply(driver, rows, has_duplicates):
             for c in CONSTRAINTS:
                 session.run(c).consume()
         print("\n제약조건 확인/생성 완료 (Food.report_no, Ingredient.name, Allergy.name UNIQUE)")
+
+    # [추가] 인덱스 생성 (IF NOT EXISTS → 이미 있으면 그대로)
+    with driver.session() as session:
+        for idx in INDEXES:
+            session.run(idx).consume()
+    print("인덱스 확인/생성 완료 (Food.category_mid)")
 
     # 100행씩 나눠 배치마다 트랜잭션 처리
     with driver.session() as session:

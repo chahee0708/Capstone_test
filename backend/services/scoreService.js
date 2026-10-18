@@ -26,7 +26,14 @@
  * STEP 5 (판정 로직 변경):
  *   - 1형 당뇨 판정에서 탄수화물 제외, carbInfo로 정보 표시만
  *
- * 호출하는 곳: backend/routes/recommend.js
+ * ── 이번 변경(대체음식 추천) — 판정 기준값·계산은 변경 없음 ─────────
+ *   - "음식 이름으로 영양소 조회" 와 "영양소로 판정" 을 분리했다.
+ *       judgeDiseaseNutrition(nutrition, ...) : 질병 사용자 판정 (기존 scoreForDiseaseUser 본문 그대로)
+ *       judgeHealthyNutrition(nutrition, ...) : 무질환 사용자 판정 (기존 scoreForHealthyUser 본문 그대로)
+ *     scoreForDiseaseUser / scoreForHealthyUser 는 조회 후 위 함수를 부르는 형태로 바뀌었고 결과는 같다.
+ *     대체음식 후보는 이미 읽어 온 영양소로 같은 판정 함수를 호출한다.
+ *
+ * 호출하는 곳: backend/routes/recommend.js, backend/services/alternativeService.js
  */
 
 const http = require("http");
@@ -795,6 +802,34 @@ async function scoreForDiseaseUser(
   const nutrition = await getFoodNutrition(session, foodName);
   if (!nutrition) return null;
 
+  // [대체음식 추천] 판정 본문은 judgeDiseaseNutrition 으로 옮겼다 (내용 변경 없음)
+  return judgeDiseaseNutrition(
+    nutrition,
+    diseases,
+    weight,
+    height,
+    age,
+    gender,
+    diseaseDetails,
+  );
+}
+
+/**
+ * 질병 보유 사용자 판정 — 영양소 값으로 바로 판정 (Neo4j 조회 없음)
+ * scoreForDiseaseUser 의 판정 부분을 그대로 옮긴 함수. 대체음식 후보 재판정에도 쓴다.
+ *
+ * @param {object} nutrition - 100g당 영양성분 (foodService.toNutrition 형식)
+ * 나머지 인자는 scoreForDiseaseUser 와 같다
+ */
+async function judgeDiseaseNutrition(
+  nutrition,
+  diseases,
+  weight,
+  height,
+  age,
+  gender,
+  diseaseDetails = {},
+) {
   const bmi = calcBMI(weight, height);
   const kdri = getDailyReference(gender, age);
 
@@ -935,6 +970,17 @@ async function scoreForHealthyUser(
   const nutrition = await getFoodNutrition(session, foodName);
   if (!nutrition) return null;
 
+  // [대체음식 추천] 판정 본문은 judgeHealthyNutrition 으로 옮겼다 (내용 변경 없음)
+  return judgeHealthyNutrition(nutrition, weight, height, age, gender);
+}
+
+/**
+ * 무질환 사용자 판정 — 영양소 값으로 바로 판정 (Neo4j 조회 없음)
+ * scoreForHealthyUser 의 판정 부분을 그대로 옮긴 함수. 대체음식 후보 재판정에도 쓴다.
+ *
+ * @param {object} nutrition - 100g당 영양성분 (foodService.toNutrition 형식)
+ */
+function judgeHealthyNutrition(nutrition, weight, height, age, gender) {
   const bmi = calcBMI(weight, height);
   const kdri = getDailyReference(gender, age);
 
@@ -957,6 +1003,9 @@ async function scoreForHealthyUser(
 module.exports = {
   scoreForDiseaseUser,
   scoreForHealthyUser,
+  // [대체음식 추천] 영양소 값으로 바로 판정 (후보 재판정용)
+  judgeDiseaseNutrition,
+  judgeHealthyNutrition,
   evaluateHealthy,
   getDailyReference,
   // [STEP 1-3] 표시용 dailyReference (탄수화물만 에너지 기반 상한으로 교체됨)
