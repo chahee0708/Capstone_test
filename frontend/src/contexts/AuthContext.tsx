@@ -1,6 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { apiFetch, readErrorMessage, SESSION_EXPIRED_EVENT } from "../lib/api";
 
 type User = {
   id: number;
@@ -8,11 +7,33 @@ type User = {
   email: string;
 };
 
+/**
+ * 가입 시 함께 저장할 건강 프로필 (서버 users 컬럼과 동일한 이름/타입)
+ */
+export type RegisterProfile = {
+  age?: number | null;
+  weight?: number | null;
+  height?: number | null;
+  gender?: "male" | "female" | null;
+  diseases?: string[];
+  allergens?: string[];
+  hypertension_stage?: 1 | 2;
+  ldl_value?: number | null;
+  tg_value?: number | null;
+  hdl_value?: number | null;
+  gfr_value?: number | null;
+};
+
 type AuthContextType = {
   user: User | null;
   token: string | null; // Compatibility purpose
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    profile?: RegisterProfile,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   loading: boolean;
 };
@@ -26,9 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await fetch(`${API_URL}/auth/me`, {
-          credentials: "include",
-        });
+        // accessToken 이 만료됐어도 refreshToken 이 유효하면 apiFetch 가 자동으로 갱신한다.
+        const res = await apiFetch("/auth/me");
         if (res.ok) {
           const data = await res.json();
           setUser(data.user);
@@ -42,47 +62,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const res = await fetch(`${API_URL}/auth/login`, {
+  // 세션이 만료되면 로그인 화면으로 이동하도록 사용자 상태를 비운다.
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const res = await apiFetch("/auth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
-      credentials: "include",
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.message || "로그인 실패");
+      throw new Error(await readErrorMessage(res, "로그인 실패"));
     }
     const data = await res.json();
     setUser(data.user);
-  };
+  }, []);
 
-  const register = async (name: string, email: string, password: string) => {
-    const res = await fetch(`${API_URL}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password }),
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.message || "회원가입 실패");
-    }
-    const data = await res.json();
-    setUser(data.user);
-  };
-
-  const logout = async () => {
-    try {
-      await fetch(`${API_URL}/auth/logout`, {
+  const register = useCallback(
+    async (name: string, email: string, password: string, profile?: RegisterProfile) => {
+      const res = await apiFetch("/auth/register", {
         method: "POST",
-        credentials: "include",
+        body: JSON.stringify({ name, email, password, profile }),
       });
+      if (!res.ok) {
+        throw new Error(await readErrorMessage(res, "회원가입 실패"));
+      }
+      const data = await res.json();
+      setUser(data.user);
+    },
+    [],
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
     } catch (error) {
       console.error("Logout error", error);
     }
     setUser(null);
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, token: null, login, register, logout, loading }}>

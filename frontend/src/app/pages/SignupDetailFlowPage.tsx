@@ -55,11 +55,11 @@ export function SignupDetailFlowPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-background py-8">
       <div className="max-w-6xl mx-auto px-4">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-emerald-600 uppercase tracking-wide">
+            <span className="text-xs font-bold text-positive-deep uppercase tracking-wide">
               SafeBite Signup
             </span>
             <h1 className="text-3xl font-black mt-2">회원가입 정보 입력</h1>
@@ -67,12 +67,12 @@ export function SignupDetailFlowPage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              className="border-slate-300"
+              
               onClick={skipDetails}
             >
               나중에 입력할게요
             </Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
+            <Button  onClick={saveFrontOnlySignup}>
               가입 완료
             </Button>
           </div>
@@ -86,7 +86,7 @@ export function SignupDetailFlowPage() {
                   <User className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs font-semibold text-slate-500">계정 등록</div>
+                  <div className="text-xs font-semibold text-body">계정 등록</div>
                   <div className="font-bold text-xl">회원 정보</div>
                 </div>
               </div>
@@ -146,12 +146,12 @@ export function SignupDetailFlowPage() {
                 />
 
                 <div className="flex gap-2">
-                  <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
+                  <Button className="flex-1" onClick={saveFrontOnlySignup}>
                     회원가입
                   </Button>
                   <Button
                     variant="outline"
-                    className="flex-1 border-slate-300"
+                    className="flex-1"
                     onClick={() => {
                       setProfile(emptyProfile);
                       setSignup({
@@ -168,7 +168,7 @@ export function SignupDetailFlowPage() {
 
                 <Button
                   variant="ghost"
-                  className="w-full text-slate-500"
+                  className="w-full text-body"
                   onClick={skipDetails}
                 >
                   나중에 입력할게요 <ChevronRight className="w-4 h-4 ml-1 inline" />
@@ -183,10 +183,10 @@ export function SignupDetailFlowPage() {
             <SignupAllergySection profile={profile} setProfile={setProfile} />
 
             <div className="flex gap-3 justify-end">
-              <Button variant="outline" className="border-slate-300" onClick={skipDetails}>
+              <Button variant="outline"  onClick={skipDetails}>
                 나중에 입력할게요
               </Button>
-              <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveFrontOnlySignup}>
+              <Button  onClick={saveFrontOnlySignup}>
                 <Save className="w-4 h-4 mr-1" /> 가입 정보 저장
               </Button>
             </div>

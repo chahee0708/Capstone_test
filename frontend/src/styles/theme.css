@@ -2,13 +2,13 @@
 
 :root {
   --font-size: 16px;
-  --background: #ffffff;
+  --background: #f9fafb;
   --foreground: oklch(0.145 0 0);
   --card: #ffffff;
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: #10b981;
+  --primary: #059669; /* 기존 화면에서 버튼에 실제로 쓰이던 emerald-600 */
   --primary-foreground: #ffffff;
   --secondary: oklch(0.95 0.0058 264.53);
   --secondary-foreground: #030213;
@@ -53,6 +53,23 @@
   --info: #3b82f6;
   --info-light: #dbeafe;
   --info-foreground: #ffffff;
+
+  /* Semantic tokens used by newer components — mapped to the original (pre-redesign) palette */
+  --ink: #111827;
+  --ink-deep: #064e3b;
+  --body: #4b5563;
+  --mute: #9ca3af;
+  --canvas: #ffffff;
+  --canvas-soft: #f3f4f6;
+  --primary-active: #059669;
+  --primary-neutral: #d1fae5;
+  --primary-pale: #ecfdf5;
+  --positive: #10b981;
+  --positive-deep: #059669;
+  --negative-deep: #dc2626;
+  --negative-bg: #fef2f2;
+  --warning-deep: #b45309;
+  --warning-content: #92400e;
 }
 
 .dark {
@@ -123,6 +140,29 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --color-ink: var(--ink);
+  --color-ink-deep: var(--ink-deep);
+  --color-body: var(--body);
+  --color-mute: var(--mute);
+  --color-canvas: var(--canvas);
+  --color-canvas-soft: var(--canvas-soft);
+  --color-primary-active: var(--primary-active);
+  --color-primary-neutral: var(--primary-neutral);
+  --color-primary-pale: var(--primary-pale);
+  --color-positive: var(--positive);
+  --color-positive-deep: var(--positive-deep);
+  --color-negative: var(--destructive);
+  --color-negative-deep: var(--negative-deep);
+  --color-negative-bg: var(--negative-bg);
+  --color-warning: var(--warning);
+  --color-warning-deep: var(--warning-deep);
+  --color-warning-content: var(--warning-content);
+  --color-warning-light: var(--warning-light);
+  --color-danger: var(--danger);
+  --color-danger-light: var(--danger-light);
+  --color-success-light: var(--success-light);
+  --color-info: var(--info);
+  --color-info-light: var(--info-light);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -191,5 +231,17 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+/* 운영체제의 "동작 줄이기" 설정을 존중한다 (애니메이션/전환 최소화) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

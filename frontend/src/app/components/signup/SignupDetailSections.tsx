@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   User,
   Heart,
@@ -8,15 +8,19 @@ import {
   Camera,
   ChevronRight,
   Save,
-  Image,
   Stethoscope,
   Activity,
+  Loader2,
 } from "lucide-react";
 import { Card } from "../ui/card";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
+import { AllergenQuickPick } from "../AllergenQuickPick";
+import { apiFetch, readErrorMessage } from "../../../lib/api";
+import { prepareImage } from "../../../lib/image";
+import type { OcrCheckupResult } from "../../../lib/types";
 
 export const COMMON_CONDITIONS = [
   "2형 당뇨",
@@ -54,6 +58,33 @@ export const emptyProfile = {
 
 export type ProfileFormState = typeof emptyProfile;
 
+function toNumberOrNull(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 가입 폼 상태(문자열 입력값)를 서버 프로필 형식(숫자/null, 고혈압 단계 1|2)으로 변환한다.
+ * 비어 있는 입력은 null 로 보내 서버가 "미입력"으로 처리하게 한다.
+ */
+export function toProfilePayload(profile: ProfileFormState) {
+  return {
+    age: toNumberOrNull(profile.age),
+    weight: toNumberOrNull(profile.weight),
+    height: toNumberOrNull(profile.height),
+    gender: profile.gender === "male" || profile.gender === "female" ? profile.gender : null,
+    diseases: profile.diseases,
+    allergens: profile.allergens,
+    hypertension_stage: profile.hypertension_stage === "Stage II" ? (2 as const) : (1 as const),
+    ldl_value: toNumberOrNull(profile.ldl_value),
+    tg_value: toNumberOrNull(profile.tg_value),
+    hdl_value: toNumberOrNull(profile.hdl_value),
+    gfr_value: toNumberOrNull(profile.gfr_value),
+  };
+}
+
 export function SignupOcrPanel({
   profile,
   setProfile,
@@ -69,72 +100,175 @@ export function SignupOcrPanel({
   ocrStatus: string;
   setOcrStatus: (value: string) => void;
 }) {
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [filled, setFilled] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<{ name: string; reason: string }[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      if (selectedImage) URL.revokeObjectURL(selectedImage);
+    },
+    // 미리보기 URL 은 교체/언마운트 때 해제한다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  /** OCR 결과를 폼에 반영한다. 사용자가 이미 입력한 값은 덮어쓰지 않는다. */
+  const applyResult = (r: OcrCheckupResult) => {
+    const done: string[] = [];
+    setProfile((prev) => {
+      const next = { ...prev };
+      const fill = (key: "age" | "height" | "weight" | "ldl_value" | "tg_value" | "hdl_value" | "gfr_value", v: number | null, label: string) => {
+        if (v !== null && v !== undefined && String(prev[key]).trim() === "") {
+          next[key] = String(v);
+          done.push(`${label} ${v}`);
+        }
+      };
+      fill("age", r.profile.age, "나이");
+      fill("height", r.profile.height, "키");
+      fill("weight", r.profile.weight, "몸무게");
+      fill("ldl_value", r.profile.ldl_value, "LDL");
+      fill("tg_value", r.profile.tg_value, "중성지방");
+      fill("hdl_value", r.profile.hdl_value, "HDL");
+      fill("gfr_value", r.profile.gfr_value, "GFR");
+      if (r.profile.gender) {
+        // 성별 기본값("female")은 사용자가 고른 값이 아니므로 인식 결과로 바꾼다
+        next.gender = r.profile.gender;
+        done.push(`성별 ${r.profile.gender === "male" ? "남성" : "여성"}`);
+      }
+      if (r.profile.hypertension_stage) {
+        next.hypertension_stage = r.profile.hypertension_stage === 2 ? "Stage II" : "Stage I";
+      }
+      return next;
+    });
+    setFilled(done);
+    setSuggestions(r.suggestedDiseases ?? []);
+    setWarnings((r.warnings ?? []).map((w) => w.message));
+  };
+
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const objectUrl = URL.createObjectURL(file);
-    setSelectedImage(objectUrl);
-    setOcrStatus(`OCR 준비 완료: ${file.name}`);
+    setFailed(false);
+    setFilled([]);
+    setSuggestions([]);
+    setWarnings([]);
+    if (selectedImage) URL.revokeObjectURL(selectedImage);
+    setSelectedImage(URL.createObjectURL(file));
+    setOcrStatus("검진 결과지를 읽고 있어요… (5~30초)");
+    setLoading(true);
 
-    const fileName = file.name.toLowerCase();
-    if (fileName.includes("profile") || fileName.includes("patient")) {
-      setProfile((prev) => ({
-        ...prev,
-        name: prev.name || "홍길동",
-        age: prev.age || "36",
-        gender: prev.gender || "male",
-        weight: prev.weight || "72",
-        height: prev.height || "176",
-        diseases: prev.diseases.length ? prev.diseases : ["고혈압", "이상지질혈증"],
-        allergens: prev.allergens.length ? prev.allergens : ["우유"],
-      }));
-      setOcrStatus("OCR로 기본 정보와 질환/알레르기 항목을 확인했습니다");
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
+    try {
+      const prepared = await prepareImage(file, 2000);
+      const form = new FormData();
+      form.append("image", prepared, prepared.name);
+      const res = await apiFetch("/ocr/checkup", { method: "POST", body: form, signal: controller.signal });
+      if (!res.ok) {
+        setFailed(true);
+        setOcrStatus(await readErrorMessage(res, "이미지를 분석하지 못했어요. 아래 항목을 직접 입력해 주세요."));
+        return;
+      }
+      const data = (await res.json()) as OcrCheckupResult;
+      applyResult(data);
+      setOcrStatus(
+        data.status === "empty"
+          ? "수치를 찾지 못했어요. 결과지가 선명하게 보이도록 다시 촬영하거나 직접 입력해 주세요."
+          : "인식한 값을 아래 입력란에 채웠어요. 틀린 값이 없는지 꼭 확인해 주세요.",
+      );
+      if (data.status === "empty") setFailed(true);
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      setFailed(true);
+      setOcrStatus("서버에 연결할 수 없어요. 아래 항목을 직접 입력해 주세요.");
+    } finally {
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   };
 
-  const runOcrDemo = () => {
-    if (!selectedImage) {
-      setOcrStatus("이미지를 선택하면 OCR로 항목을 채울 수 있습니다");
-      return;
-    }
-
-    setOcrStatus("OCR 스캔 완료: 이름, 나이, 성별, 키/몸무게, 질환, 알레르기 후보를 읽었습니다");
-    setProfile((prev) => ({
-      ...prev,
-      name: prev.name || "홍길동",
-      age: prev.age || "36",
-      gender: prev.gender || "male",
-      weight: prev.weight || "72",
-      height: prev.height || "176",
-      diseases: prev.diseases.length ? prev.diseases : ["고혈압"],
-      allergens: prev.allergens.length ? prev.allergens : ["우유"],
-    }));
+  const addDisease = (name: string) => {
+    setProfile((prev) => (prev.diseases.includes(name) ? prev : { ...prev, diseases: [...prev.diseases, name] }));
+    setSuggestions((prev) => prev.filter((s) => s.name !== name));
   };
 
   return (
-    <div className="rounded-lg bg-slate-50 p-4 border">
+    <div className="rounded-lg bg-background p-4 border">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-slate-700">추가 정보 입력</span>
-        <span className="text-xs text-slate-500">선택 사항</span>
+        <span className="text-sm font-semibold text-body">건강검진 결과지로 자동 입력</span>
+        <span className="text-xs text-body">선택 사항</span>
       </div>
       <div className="mt-4">
-        <div className="flex gap-2">
-          <label className="w-full cursor-pointer rounded-lg border border-dashed border-emerald-500 px-3 py-3 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-50">
-            <Camera className="w-4 h-4 inline mr-1" />
-            이미지로 OCR
-            <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-          </label>
-          <Button variant="outline" size="sm" type="button" onClick={runOcrDemo}>
-            <Image className="w-4 h-4 mr-1" /> OCR
-          </Button>
-        </div>
-        <div className="mt-2 text-xs text-slate-500">{ocrStatus}</div>
-        {selectedImage && (
-          <div className="mt-4">
-            <img src={selectedImage} alt="OCR preview" className="w-full h-40 object-cover rounded-lg border" />
+        <label
+          className={`flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-ink px-3 py-3 text-center text-sm font-semibold text-positive-deep hover:bg-primary-pale focus-within:ring-2 focus-within:ring-ring ${
+            loading ? "pointer-events-none opacity-60" : "cursor-pointer"
+          }`}
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Camera className="w-4 h-4" aria-hidden="true" />}
+          {loading ? "읽는 중…" : "결과지 사진 선택 / 촬영"}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleImageUpload}
+            disabled={loading}
+            data-testid="checkup-file"
+          />
+        </label>
+        <p className={`mt-2 text-xs ${failed ? "text-negative-deep" : "text-body"}`} role="status" aria-live="polite">
+          {ocrStatus}
+        </p>
+
+        {filled.length > 0 && (
+          <p className="mt-2 text-xs text-positive-deep">채운 항목: {filled.join(" · ")}</p>
+        )}
+        {warnings.length > 0 && (
+          <ul className="mt-2 space-y-1 text-xs text-warning-content">
+            {warnings.map((w) => (
+              <li key={w}>• {w}</li>
+            ))}
+          </ul>
+        )}
+
+        {suggestions.length > 0 && (
+          <div className="mt-3 rounded-lg bg-warning-light px-3 py-2">
+            <p className="text-xs font-semibold text-warning-content mb-1.5">
+              수치상 해당될 수 있는 질환 (참고용 — 의사 진단이 아니에요)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((s) => (
+                <button
+                  key={s.name}
+                  type="button"
+                  onClick={() => addDisease(s.name)}
+                  className="inline-flex items-center gap-1 rounded-full border border-warning-deep/50 bg-canvas px-3 py-1.5 text-xs font-medium text-warning-content hover:bg-primary-pale focus-visible:ring-2 focus-visible:ring-ring"
+                  title={s.reason}
+                >
+                  <Plus className="w-3 h-3" aria-hidden="true" /> {s.name}
+                  <span className="text-mute font-normal">· {s.reason}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
+
+        {selectedImage && (
+          <div className="mt-4">
+            <img src={selectedImage} alt="선택한 검진 결과지 미리보기" className="w-full h-40 object-cover rounded-lg border" />
+          </div>
+        )}
+        <p className="mt-3 text-xs text-mute">
+          사진은 글자를 읽는 데만 사용하고 저장하지 않아요. 주민등록번호 등 개인정보는 가리고 올려도 됩니다.
+        </p>
       </div>
     </div>
   );
@@ -150,7 +284,7 @@ export function SignupPersonalInfoSection({
   return (
     <Card className="p-6">
       <div className="flex items-center gap-2 mb-4">
-        <User className="w-5 h-5 text-emerald-600" />
+        <User className="w-5 h-5 text-positive-deep" />
         <h2 className="font-black text-lg">개인정보</h2>
       </div>
 
@@ -253,7 +387,7 @@ export function SignupHealthConditionsSection({
   return (
     <Card className="p-6">
       <div className="flex items-center gap-2 mb-4">
-        <Heart className="w-5 h-5 text-red-600" />
+        <Heart className="w-5 h-5 text-negative-deep" />
         <h2 className="font-black text-lg">건강질환</h2>
       </div>
 
@@ -261,12 +395,12 @@ export function SignupHealthConditionsSection({
         {profile.diseases.map((disease) => (
           <Badge
             key={disease}
-            className="bg-red-100 text-red-700 hover:bg-red-100 flex items-center gap-1 pr-1"
+            className="bg-negative/10 text-negative-deep hover:bg-negative/10 flex items-center gap-1 pr-1"
           >
             <span>{disease}</span>
             <button
               type="button"
-              className="inline-flex items-center justify-center rounded-full p-0.5 hover:bg-red-200 text-red-700 hover:text-red-900 pointer-events-auto cursor-pointer focus:outline-none transition-colors"
+              className="inline-flex items-center justify-center rounded-full p-0.5 hover:bg-red-200 text-negative-deep hover:text-red-900 pointer-events-auto cursor-pointer focus:outline-none transition-colors"
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -307,11 +441,13 @@ export function SignupHealthConditionsSection({
         {COMMON_CONDITIONS.filter((d) => !profile.diseases.includes(d)).map((d) => (
           <Badge
             key={d}
+            asChild
             variant="outline"
-            className="cursor-pointer hover:bg-emerald-50"
-            onClick={() => addDisease(d)}
+            className="cursor-pointer hover:bg-primary-pale"
           >
-            <Plus className="w-3 h-3 mr-1" /> {d}
+            <button type="button" aria-label={`${d} 추가`} onClick={() => addDisease(d)}>
+              <Plus className="w-3 h-3 mr-1" /> {d}
+            </button>
           </Badge>
         ))}
       </div>
@@ -473,17 +609,8 @@ export function SignupAllergySection({
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2 mt-3">
-        {COMMON_ALLERGIES.filter((a) => !profile.allergens.includes(a)).map((a) => (
-          <Badge
-            key={a}
-            variant="outline"
-            className="cursor-pointer hover:bg-emerald-50"
-            onClick={() => addAllergy(a)}
-          >
-            <Plus className="w-3 h-3 mr-1" /> {a}
-          </Badge>
-        ))}
+      <div className="mt-3">
+        <AllergenQuickPick selected={profile.allergens} onAdd={addAllergy} />
       </div>
     </Card>
   );
