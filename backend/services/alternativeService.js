@@ -15,19 +15,21 @@
  *   5. 재판정 중 에러가 난 후보는 건너뛰고 로그만 남김
  *
  * 등급 필터:
- *   - 일반: 후보 등급이 원래 verdict 보다 더 나은 것 (비추천 → 주의·추천 / 주의 → 추천)
- *   - allergyOverride: 후보 등급이 원래 nutritionVerdict 와 같거나 더 나은 것
- *     (알레르기 성분이 없는 같은 영양 수준 음식이면 충분히 대체가 되기 때문)
+ *   - 후보 등급이 원래 verdict 보다 더 나은 것 (비추천 → 주의·추천 / 주의 → 추천)
+ *
+ * 이번 변경(알레르기는 경고로만 표시):
+ *   - [삭제] allergyOverride 등급 필터 분기. verdict 가 알레르기로 바뀌지 않으므로 필요 없다
+ *   - 사용자 알레르기와 겹치는 후보를 제외하는 조건은 그대로 유지
  *
  * 결과 항목: { name, verdict, similarity, keyNutrient: { label, unit, before, after } | null, sharedIngredients }
  *
- * 이번에 바뀐 점:
+ * 이전 변경:
  *   - [변경] 동점 정렬: 유사도(소수 둘째 자리)·등급이 같으면 이름 가나다순 → report_no 순
  *     (이전에는 원래 유사도 순이라, 완전히 같은 값이면 Neo4j 반환 순서에 따라 결과가 달라질 수 있었다)
  *   - [추가] 사용자 알레르기가 있으면 알레르기 정보(CONTAINS_ALLERGEN)가 하나도 없는 후보는 제외
  *     (원본 데이터에 알레르기 표기가 빠진 흰우유 등이 우유 알레르기 사용자에게 추천되던 문제)
  *
- * 호출: backend/routes/recommend.js (최종 판정이 주의/비추천일 때)
+ * 호출: backend/routes/recommend.js (영양 판정이 주의/비추천일 때)
  */
 
 const { SIM_THRESHOLD, MAX_ALTERNATIVES } = require("../config/alternatives");
@@ -123,7 +125,7 @@ async function judge(nutrition, user) {
  * @param {object} session        - Neo4j 세션
  * @param {string} originalFood   - 원래 음식 이름
  * @param {object} user           - { diseases, allergens, weight, height, age, gender, diseaseDetails }
- * @param {object} originalResult - { verdict, nutritionVerdict, allergyOverride, reasons, nutrition }
+ * @param {object} originalResult - { verdict, reasons, nutrition }
  * @returns {Promise<Array>} alternatives 배열 (없으면 [])
  */
 async function findAlternatives(session, originalFood, user, originalResult) {
@@ -160,11 +162,8 @@ async function findAlternatives(session, originalFood, user, originalResult) {
     .filter((c) => c.sim >= SIM_THRESHOLD)
     .sort((a, b) => b.sim - a.sim);
 
-  // ── 등급 필터 기준 ──
-  const passes = (verdict) =>
-    originalResult.allergyOverride
-      ? RANK[verdict] >= RANK[originalResult.nutritionVerdict] // 같거나 더 나은 것
-      : RANK[verdict] > RANK[originalResult.verdict]; // 더 나은 것
+  // ── 등급 필터 기준: 원래 판정보다 더 나은 것만 ──
+  const passes = (verdict) => RANK[verdict] > RANK[originalResult.verdict];
 
   // 문제 영양소 (결과 항목의 keyNutrient 용)
   const key = pickKeyNutrient(originalResult.reasons);

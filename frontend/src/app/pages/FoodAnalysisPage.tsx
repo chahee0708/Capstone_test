@@ -6,14 +6,18 @@
  * 쓰이는 곳: routes.ts 의 "/analysis" 경로 (홈 화면 링크로 진입)
  *
  * 표시 구조 (결과가 있을 때):
- *   1. 판정 카드 (VerdictCard) — 판정 + 판정 근거 + 알레르기 배지/성분 상자
+ *   1. 판정 카드 (VerdictCard) — 판정 + 판정 근거 + 알레르기 경고(배지/상자/성분 목록)
  *      - 2형 당뇨 사용자: GI 지수 한 줄 추가
  *   2. 대체음식 섹션 (AlternativesSection) — 응답에 alternatives 가 있을 때만
  *   3. 영양 정보 슬라이드 카드 (NutritionSlideCard)
  *      - 1페이지: 영양소 균형 (NutrientRadarChart)
  *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
  *
- * ── 이번 변경(분석 페이지 개편) ──────────────────────────────
+ * ── 이번 변경(알레르기는 경고로만 표시) ────────────────────────
+ *   - VerdictCard 에 nutritionVerdict 전달 제거 (경고 문구는 VerdictCard 가 allergens 로 표시)
+ *   - 응답 타입 필드는 그대로, verdict / nutritionVerdict / allergyOverride 주석만 새 규칙에 맞춤
+ *
+ * ── 이전 변경(분석 페이지 개편) ──────────────────────────────
  *   - 판정 카드 2종(GI 카드 / 일반 카드)을 VerdictCard 컴포넌트 하나로 합침
  *   - 별도 알레르기 카드 삭제 → 판정 카드 안으로 이동 (배지 + 결론 문장 + 성분 상자)
  *   - 응답 타입에 nutritionVerdict / allergens / allergyOverride / alternatives 추가
@@ -68,9 +72,9 @@ type AnalysisResult = {
   productName: string;
   userType: string;
   diseaseTrack: "diabetes" | "rule" | "healthy";
-  // 최종 판정 (알레르기 성분이 있으면 항상 "비추천")
+  // 최종 판정 (영양 판정 그대로. 알레르기는 등급에 영향을 주지 않는다)
   verdict: "추천" | "주의" | "비추천";
-  // 알레르기 적용 전 영양 판정
+  // 영양 판정 (verdict 와 같은 값. 응답 형식 유지용)
   nutritionVerdict?: "추천" | "주의" | "비추천";
   giCategory: "Low" | "Medium" | "High" | null;
   bmi: string;
@@ -94,7 +98,7 @@ type AnalysisResult = {
   allergenAlert: string[];
   // 걸린 알레르기 이름 배열 (없으면 []). 예) ["우유", "갑각류(새우)"]
   allergens?: string[];
-  // 알레르기 때문에 "비추천" 으로 강제됐는지
+  // 항상 false (알레르기로 판정을 바꾸지 않는다. 응답 형식 유지용)
   allergyOverride?: boolean;
   // [추가] 사용자 알레르기가 있는데 이 제품에 알레르기 정보가 없으면 true (판정 카드 회색 안내)
   allergyUnknown?: boolean;
@@ -300,7 +304,6 @@ export function FoodAnalysisPage() {
                 key={analysisResult.productName}
                 productName={analysisResult.productName}
                 verdict={analysisResult.verdict}
-                nutritionVerdict={analysisResult.nutritionVerdict}
                 giCategory={analysisResult.giCategory}
                 reasons={analysisResult.reasons ?? []}
                 carbInfo={analysisResult.carbInfo}
