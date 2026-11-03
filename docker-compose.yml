@@ -17,6 +17,11 @@ services:
 
   backend:
     build: ./backend
+    # CLOVA OCR 키 전달용. .dockerignore 가 .env 를 이미지에서 제외하므로 여기서 넘긴다
+    # 아래 environment 에 적힌 값이 우선하고, .env 가 없는 환경에서도 오류가 나지 않는다
+    env_file:
+      - path: ./backend/.env
+        required: false
     ports:
       - "4000:4000"
     depends_on:
