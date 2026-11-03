@@ -17,7 +17,13 @@
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(대체음식 추천) ──────────────────────────────────
+ * ── 이번 변경(알레르기 정보 없음 안내) ─────────────────────────
+ *   - [추가] allergyUnknown: 사용자 알레르기가 있는데 원래 음식에 알레르기 정보(CONTAINS_ALLERGEN)가
+ *     하나도 없으면 true (verdict 는 바꾸지 않음) → 프론트 판정 카드에 회색 안내
+ *     단, 원재료 이름으로 알레르기 성분이 이미 확인된 경우(allergens 1개 이상)는 false
+ *     (이미 "알레르기 성분 포함" 으로 비추천이므로 "정보 없음" 안내와 겹치지 않게)
+ *
+ * ── 이전 변경(대체음식 추천) ──────────────────────────────────
  *   - 최종 판정이 끝난 뒤 findAlternatives 호출 → 응답에 alternatives 필드 추가
  *       최종 verdict 가 "주의"/"비추천" 일 때만 필드를 넣는다 ("추천" 이면 필드 자체가 없음 → 프론트 섹션 숨김)
  *       대체음식 처리에서 예외가 나도 분석 응답은 실패시키지 않고 alternatives: [] 로 보낸다
@@ -51,7 +57,7 @@ const {
   scoreForHealthyUser,
   getDisplayDailyReference,
 } = require("../services/scoreService");
-const { checkAllergens } = require("../services/allergyService");
+const { checkAllergens, hasAllergenInfo } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
 
 router.post("/", async (req, res) => {
@@ -148,6 +154,13 @@ router.post("/", async (req, res) => {
     const allergyOverride = foundAllergens.length > 0;
     const finalVerdict = allergyOverride ? "비추천" : nutritionVerdict;
 
+    // [추가] 알레르기 정보 없음: 사용자 알레르기 있음 + 음식에 CONTAINS_ALLERGEN 없음 + 걸린 성분 없음
+    //        판정(verdict)은 그대로 두고 안내 플래그만 보낸다
+    const allergyUnknown =
+      allergens.length > 0 &&
+      foundAllergens.length === 0 &&
+      !(await hasAllergenInfo(session, foodName));
+
     // ── Step 5-2. 대체음식 추천 (최종 판정이 주의/비추천일 때만) ──────
     // alternatives 가 undefined 면 응답에 필드를 넣지 않는다 → 프론트에서 섹션이 안 보임
     let alternatives;
@@ -205,6 +218,7 @@ router.post("/", async (req, res) => {
       allergenAlert: foundAllergens, // 호환성 유지용 (allergens 와 같은 값)
       allergens: foundAllergens, // 걸린 알레르기 이름 배열 (없으면 [])
       allergyOverride, // 알레르기 때문에 "비추천" 으로 강제됐는지
+      allergyUnknown, // [추가] 알레르기 정보가 없어 확인이 필요한지 (판정에는 영향 없음)
       dailyReference,
       // 대체음식: 최종 판정이 주의/비추천일 때만 필드가 생긴다
       ...(alternatives !== undefined && { alternatives }),

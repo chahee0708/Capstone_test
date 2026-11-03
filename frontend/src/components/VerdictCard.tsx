@@ -17,12 +17,17 @@
  *     카드 색·아이콘은 최종 verdict 기준 (알레르기가 없으면 GI 카드도 기존과 같은 색:
  *     백엔드가 GI Low/Medium/High 를 추천/주의/비추천 으로 그대로 바꾸기 때문)
  *
+ * 알레르기 정보 없음 안내 (이번 추가):
+ *   - allergyUnknown 이면 고정 영역 아래에 회색 안내 한 줄
+ *     "이 제품은 알레르기 정보가 없어 확인이 필요해요. 포장의 원재료를 꼭 확인하세요."
+ *     판정(색·글씨)은 바꾸지 않는다
+ *
  * 쓰이는 곳: frontend/src/app/pages/FoodAnalysisPage.tsx (결과 화면 1번 블록)
  *            제품이 바뀌면 1페이지부터 보이도록 페이지에서 key={productName} 으로 쓴다
  */
 
 import { useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle, Info } from "lucide-react";
 import { Card } from "../app/components/ui/card";
 import {
   VerdictExplanation,
@@ -70,6 +75,7 @@ type Props = {
   reasons: Reason[];
   carbInfo: CarbInfo | null;
   allergens: string[]; // 걸린 알레르기 이름 (없으면 [])
+  allergyUnknown?: boolean; // [추가] 알레르기 정보가 없어 확인이 필요한 제품
 };
 
 export function VerdictCard({
@@ -80,6 +86,7 @@ export function VerdictCard({
   reasons,
   carbInfo,
   allergens,
+  allergyUnknown = false,
 }: Props) {
   const style = VERDICT_STYLE[verdict] ?? VERDICT_STYLE["비추천"];
   const Icon = style.icon;
@@ -118,6 +125,14 @@ export function VerdictCard({
           )}
         </div>
       </div>
+
+      {/* ── [추가] 알레르기 정보 없음 안내 (회색, 판정에는 영향 없음) ── */}
+      {allergyUnknown && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg bg-gray-100 border border-gray-200 px-3 py-2.5 text-sm text-gray-600">
+          <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-500" aria-hidden="true" />
+          <p>이 제품은 알레르기 정보가 없어 확인이 필요해요. 포장의 원재료를 꼭 확인하세요.</p>
+        </div>
+      )}
 
       {/* ── 슬라이드 영역 ── */}
       <div className="mt-2 pt-4 border-t border-black/10">

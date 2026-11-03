@@ -17,6 +17,10 @@
  *     예전처럼 HAS_INGREDIENT 의 Ingredient.name 으로 판정 (emart 적재 전 기존 음식용)
  *   - 결과 중복 제거
  *   - 함수 이름, 인자, 반환 형식(문자열 배열)은 그대로
+ *
+ * ── 이번 변경(알레르기 정보 없음 안내) ─────────────────────────
+ *   - [추가] hasAllergenInfo(session, foodName): 음식에 CONTAINS_ALLERGEN 관계가 1개 이상 있는지
+ *     → recommend.js 가 allergyUnknown(알레르기 정보 없음) 판단에 사용. checkAllergens 는 변경 없음
  */
 
 // 새 방식: 음식의 CONTAINS_ALLERGEN 관계 수 + 사용자 목록과 이름/그룹이 맞는 Allergy
@@ -67,4 +71,20 @@ async function checkAllergens(session, foodName, userAllergens) {
   return [...new Set(found)];
 }
 
-module.exports = { checkAllergens };
+/**
+ * [추가] 음식에 알레르기 정보(CONTAINS_ALLERGEN 관계)가 1개 이상 있는지
+ * 같은 이름의 음식이 여러 개면 하나라도 있으면 true
+ * @returns {Promise<boolean>}
+ */
+async function hasAllergenInfo(session, foodName) {
+  const result = await session.run(
+    `MATCH (f:Food {name: $foodName})
+     RETURN count { (f)-[:CONTAINS_ALLERGEN]->(:Allergy) } > 0 AS has
+     ORDER BY has DESC
+     LIMIT 1`,
+    { foodName },
+  );
+  return result.records.length > 0 && result.records[0].get("has") === true;
+}
+
+module.exports = { checkAllergens, hasAllergenInfo };

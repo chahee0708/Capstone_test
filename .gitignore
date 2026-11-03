@@ -33,3 +33,6 @@ neo4j_data/
 venv/
 *.pyc
 backup/
+
+# 대체음식 평가 스크립트 출력 (backend/scripts/evalAlternatives.js)
+eval_output/

@@ -10,7 +10,8 @@
  *      사용자 알레르기(이름 또는 그룹)와 겹치는 음식 제외. 원재료는 order 순, 영양소 속성 함께
  *   3. 모든 후보 유사도 계산 → 기준 미만 제거 → 유사도 높은 순 정렬
  *   4. 위에서부터 사용자 기준으로 재판정 (원래 음식과 같은 판정 함수) → 등급 필터 통과 시 추가
- *      MAX_ALTERNATIVES 개 차면 즉시 중단. 유사도가 같으면(소수 둘째 자리) 등급이 좋은 쪽 먼저
+ *      MAX_ALTERNATIVES 개 차면 즉시 중단. 유사도가 같으면(소수 둘째 자리) 등급이 좋은 쪽 먼저,
+ *      등급도 같으면 음식 이름 가나다순 → 이름도 같으면 report_no 순 (항상 같은 결과)
  *   5. 재판정 중 에러가 난 후보는 건너뛰고 로그만 남김
  *
  * 등급 필터:
@@ -20,7 +21,11 @@
  *
  * 결과 항목: { name, verdict, similarity, keyNutrient: { label, unit, before, after } | null, sharedIngredients }
  *
- * 이번에 바뀐 점: 새 파일
+ * 이번에 바뀐 점:
+ *   - [변경] 동점 정렬: 유사도(소수 둘째 자리)·등급이 같으면 이름 가나다순 → report_no 순
+ *     (이전에는 원래 유사도 순이라, 완전히 같은 값이면 Neo4j 반환 순서에 따라 결과가 달라질 수 있었다)
+ *   - [추가] 사용자 알레르기가 있으면 알레르기 정보(CONTAINS_ALLERGEN)가 하나도 없는 후보는 제외
+ *     (원본 데이터에 알레르기 표기가 빠진 흰우유 등이 우유 알레르기 사용자에게 추천되던 문제)
  *
  * 호출: backend/routes/recommend.js (최종 판정이 주의/비추천일 때)
  */
@@ -45,6 +50,8 @@ const NUTRIENT_KEY = {
 };
 
 const round1 = (n) => Math.round(n * 10) / 10;
+// [추가] 문자열 비교 (코드 순). 동점 후보 정렬에 사용
+const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // 원래 음식 조회: 중분류 + 원재료(order 순). 같은 이름이 여러 개면 중분류가 있는 쪽 우선
@@ -67,10 +74,12 @@ const CANDIDATE_QUERY = `
       MATCH (c)-[:CONTAINS_ALLERGEN]->(a:Allergy)
       WHERE a.name IN $allergens OR a.group IN $allergens
     }
+    // [추가] 사용자 알레르기가 있으면 알레르기 정보가 없는 후보 제외 (안전한지 확인할 수 없음)
+    AND (size($allergens) = 0 OR EXISTS { (c)-[:CONTAINS_ALLERGEN]->(:Allergy) })
   MATCH (c)-[r:HAS_INGREDIENT]->(i:Ingredient)
   WITH c, r, i ORDER BY r.order
   WITH c, collect(i.name) AS ingredients
-  RETURN c.name AS name, ingredients,
+  RETURN c.name AS name, c.report_no AS reportNo, ingredients,
          c { .sugar, .sodium, .saturated_fat, .protein, .calories,
              .carbohydrate, .fat, .trans_fat, .cholesterol } AS props`;
 
@@ -142,6 +151,7 @@ async function findAlternatives(session, originalFood, user, originalResult) {
       const ingredients = r.get("ingredients");
       return {
         name: r.get("name"),
+        reportNo: r.get("reportNo") ?? "", // [추가] 동점 정렬용
         ingredients,
         props: r.get("props"),
         sim: similarity(origIngredients, ingredients),
@@ -181,8 +191,9 @@ async function findAlternatives(session, originalFood, user, originalResult) {
       }
     }
 
-    // 같은 유사도면 등급 좋은 쪽 먼저, 그다음 원래 유사도 순
-    judged.sort((a, b) => RANK[b.verdict] - RANK[a.verdict] || b.sim - a.sim);
+    // [변경] 같은 유사도 묶음 안 정렬: 등급 좋은 쪽 먼저 → 이름 가나다순 → report_no 순
+    //        (문자열 코드 순 비교: 한글 완성형은 유니코드가 가나다 순이고, 실행 환경과 무관하게 항상 같다)
+    judged.sort((a, b) => RANK[b.verdict] - RANK[a.verdict] || compareText(a.name, b.name) || compareText(a.reportNo, b.reportNo));
 
     for (const c of judged) {
       if (results.length >= MAX_ALTERNATIVES) break; // 다 찼으면 즉시 중단

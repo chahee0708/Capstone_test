@@ -96,6 +96,8 @@ type AnalysisResult = {
   allergens?: string[];
   // 알레르기 때문에 "비추천" 으로 강제됐는지
   allergyOverride?: boolean;
+  // [추가] 사용자 알레르기가 있는데 이 제품에 알레르기 정보가 없으면 true (판정 카드 회색 안내)
+  allergyUnknown?: boolean;
   // 대체음식 (다음 단계에서 백엔드가 보냄. 필드가 없으면 섹션을 숨긴다)
   alternatives?: Alternative[];
   // 성별+나이 기반 KDRI 1일 기준값 (프론트 차트 max값으로 사용)
@@ -303,6 +305,7 @@ export function FoodAnalysisPage() {
                 reasons={analysisResult.reasons ?? []}
                 carbInfo={analysisResult.carbInfo}
                 allergens={allergens}
+                allergyUnknown={analysisResult.allergyUnknown ?? false}
               />
 
               {/* ── 2. 대체음식 섹션: 응답에 alternatives 가 있을 때만 (지금은 백엔드가 안 보내서 숨김) ── */}
