@@ -22,6 +22,10 @@
  *
  * mayContain: "혼입 가능" + "같은 제조시설에서 제조" 문구의 이름을 합쳐 중복 없이 넣는다
  *
+ * 알레르기 이름 확인:
+ *   allergenText, mayContain 의 이름이 프로젝트 알레르기 목록에 없으면 warnings 에 적는다.
+ *   잘린 글자("돼지고" + "기 함유" → "기")를 놓치지 않기 위해서이며, 이름은 결과에서 빼지 않는다.
+ *
  * 이번 변경: 새 파일
  *
  * 호출: backend/routes/ocr.js (POST /ocr/label)
@@ -223,7 +227,7 @@ function splitTopLevel(text) {
   for (const ch of text) {
     if (ch === "(") depth += 1;
     if (ch === ")") depth = Math.max(0, depth - 1);
-    if ((ch === "," || ch === "，") && depth === 0) {
+    if ((ch === "," || ch === "，" || ch === "、") && depth === 0) {
       items.push(current);
       current = "";
     } else {
@@ -279,13 +283,30 @@ function findIngredients(lines, warnings, allergenLines) {
   return ingredients;
 }
 
+// 알레르기 표기 목록. 출처: data_pipeline/clean_foods.py 의 ALLERGEN_MAP, ALLERGEN_PREFIX_MAP
+// (Neo4j Allergy 노드도 여기서 만들어진다. 파이프라인에 표기를 추가하면 여기도 같이 추가할 것)
+const KNOWN_ALLERGENS = new Set([
+  "계란", "달걀", "알류", "난류",
+  "쇠고기", "소고기", "돼지고기", "닭고기",
+  "굴", "홍합", "이산화황", "아황산류",
+  "잣", "산양유", "우유", "대두", "밀", "땅콩",
+  "새우", "토마토", "오징어", "호두", "게",
+  "복숭아", "메밀", "고등어", "헤이즐넛",
+]);
+
+/** 목록에 있는 이름인지 (띄어쓰기와 뒤 괄호 무시. "알류(달걀)" → 알류, "조개류(굴)" → 조개류) */
+function isKnownAllergen(name) {
+  const base = name.replace(/\s+/g, "").replace(/\(.*\)$/, "");
+  return KNOWN_ALLERGENS.has(base) || base.startsWith("조개류");
+}
+
 /** 문구 목록에서 패턴을 찾아 쉼표로 나눈 이름 배열로 */
 function collectNames(texts, pattern, isExcluded = () => false) {
   const names = [];
   for (const text of texts) {
     for (const match of text.matchAll(pattern)) {
       if (isExcluded(match[1])) continue;
-      for (const name of match[1].split(/[,，、]/)) {
+      for (const name of splitTopLevel(match[1])) {
         const cleaned = name
           .replace(/^\s*(?:이|본)\s*제품은\s*/, "")
           .replace(/\s*등$/, "")
@@ -319,7 +340,8 @@ function findAllergenPhrases(lines) {
     if (!/(?<!포)함유/.test(text)) continue;
 
     // 괄호 안 문구("유크림(우유 함유)")는 원재료의 일부이므로 줄을 잇거나 빼지 않는다
-    if (/^[^()]*함유[.)]*$/.test(text.replace(/\s+/g, ""))) {
+    // 이름 뒤의 닫힌 괄호("조개류(굴) 함유")는 괄호 밖 문구로 본다
+    if (/^(?:[^()]|\([^()]*\))*함유[.)]*$/.test(text.replace(/\s+/g, ""))) {
       let above = lineAbove(lines, line);
       while (
         above &&
@@ -343,7 +365,7 @@ function findAllergenPhrases(lines) {
 function findAllergens(phrases, warnings) {
   const names = collectNames(
     phrases,
-    /([^()·•:：.]*?)\s*(?<!포)함유(?![량된])/g,
+    /((?:[^()·•:：.]|\([^()]*\))*?)\s*(?<!포)함유(?![량된])/g,
     (text) => /무\s*$/.test(text),
   );
   if (names.length === 0) warnings.push("알레르기 '함유' 문구를 찾지 못했습니다.");
@@ -373,17 +395,18 @@ function toParagraphs(lines) {
 
 const MAY_CONTAIN_PATTERNS = [
   // "복숭아 혼입 가능"
-  /([^()·•:：.]*?)\s*혼\s*입\s*(?:가\s*능|될\s*수\s*있)/g,
+  /((?:[^()·•:：.]|\([^()]*\))*?)\s*혼\s*입\s*(?:가\s*능|될\s*수\s*있)/g,
   // "메밀, 땅콩을 사용한 제품과 같은 제조시설에서 제조"
-  /([^()·•:：.]*?)\s*(?:을|를)?\s*(?:사\s*용\s*한\s*제\s*품[과을를]?\s*)?(?:같\s*은|동\s*일\s*한?)\s*제\s*조\s*시\s*설\s*에\s*서\s*제\s*조/g,
+  /((?:[^()·•:：.]|\([^()]*\))*?)\s*(?:을|를)?\s*(?:사\s*용\s*한\s*제\s*품[과을를]?\s*)?(?:같\s*은|동\s*일\s*한?)\s*제\s*조\s*시\s*설\s*에\s*서\s*제\s*조/g,
 ];
 
 /** 혼입 가능 + 같은 제조시설 문구의 이름을 합친다. 문구가 없는 제품도 많으므로 warnings 에 넣지 않는다 */
 function findMayContain(lines) {
-  const paragraphs = toParagraphs(lines);
+  // 함유 문구의 이름이 섞이지 않도록 "함유" 에서 문단을 끊는다
+  const paragraphs = toParagraphs(lines).flatMap((p) => p.split(/(?<!포)함유/));
   const names = MAY_CONTAIN_PATTERNS.flatMap((pattern) => collectNames(paragraphs, pattern))
-    // 문단을 이으면 앞줄 글자가 섞일 수 있어 문구 바로 앞 낱말만 쓴다
-    .map((name) => name.split(/\s+/).pop())
+    // 문단을 이으면 앞줄 글자가 섞일 수 있어 문구 바로 앞 낱말만 쓴다 (괄호 안 띄어쓰기는 낱말을 나누지 않게 제거)
+    .map((name) => name.replace(/\([^()]*\)/g, (m) => m.replace(/\s+/g, "")).split(/\s+/).pop())
     .filter((name) => !name.includes("제품"));
   return [...new Set(names)];
 }
@@ -407,6 +430,17 @@ function parseLabel(fields) {
   const basis = findBasis(lines, warnings);
   const nutritionRaw = findNutrition(lines, warnings);
   const allergenPhrases = findAllergenPhrases(lines);
+  const ingredients = findIngredients(lines, warnings, allergenPhrases.memberLines);
+  const allergenText = findAllergens(allergenPhrases.texts, warnings);
+  const mayContain = findMayContain(lines);
+
+  // 목록에 없는 이름은 결과에 그대로 두고 경고만 추가한다
+  const unknownAllergens = [...new Set([...allergenText, ...mayContain])].filter(
+    (name) => !isKnownAllergen(name),
+  );
+  if (unknownAllergens.length > 0) {
+    warnings.push(`알레르기 문구 일부를 정확히 읽지 못함: ${unknownAllergens.join(", ")}`);
+  }
 
   return {
     productName,
@@ -414,9 +448,9 @@ function parseLabel(fields) {
     basis,
     nutritionRaw,
     nutritionPer100g: toNutritionPer100g(nutritionRaw, basis),
-    ingredients: findIngredients(lines, warnings, allergenPhrases.memberLines),
-    allergenText: findAllergens(allergenPhrases.texts, warnings),
-    mayContain: findMayContain(lines),
+    ingredients,
+    allergenText,
+    mayContain,
     warnings,
     rawText: safeFields.map((f) => f.inferText).join(" "),
   };

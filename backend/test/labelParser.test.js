@@ -225,6 +225,53 @@ test("환산은 to_per_100 과 같은 사사오입이다", () => {
   assert.strictEqual(toPer100(null, 100), null);
 });
 
+test("알레르기 이름 확인: 잘린 이름은 그대로 두고 경고한다", () => {
+  const r = parseLabel(fragmentsFrom(["우유, 돼지고", "기 함유"]));
+  assert.deepStrictEqual(r.allergenText, ["기"]);
+  assert.ok(r.warnings.includes("알레르기 문구 일부를 정확히 읽지 못함: 기"));
+});
+
+test("알레르기 이름 확인: 목록에 없는 이름은 함유와 혼입 모두 경고한다", () => {
+  const r = parseLabel(fragmentsFrom(["칼슘 함유", "키위 혼입 가능"]));
+  assert.deepStrictEqual(r.allergenText, ["칼슘"]);
+  assert.deepStrictEqual(r.mayContain, ["키위"]);
+  assert.ok(r.warnings.includes("알레르기 문구 일부를 정확히 읽지 못함: 칼슘, 키위"));
+});
+
+test("알레르기 이름 확인: 목록에 있는 표기는 경고하지 않는다", () => {
+  const r = parseLabel(
+    fragmentsFrom(["달걀, 소고기, 알류(달걀), 조개류(굴) 함유", "복숭아 혼입 가능"]),
+  );
+  assert.deepStrictEqual(r.allergenText, ["달걀", "소고기", "알류(달걀)", "조개류(굴)"]);
+  assert.deepStrictEqual(r.mayContain, ["복숭아"]);
+  assert.ok(!r.warnings.some((w) => w.includes("정확히 읽지 못함")));
+});
+
+test("함유 문구의 이름은 바로 다음 혼입 문구에 섞이지 않는다", () => {
+  const twoLines = parseLabel(fragmentsFrom(["대두, 우유 함유", "복숭아 혼입 가능"]));
+  assert.deepStrictEqual(twoLines.allergenText, ["대두", "우유"]);
+  assert.deepStrictEqual(twoLines.mayContain, ["복숭아"]);
+
+  const oneLine = parseLabel(fragmentsFrom(["대두, 우유 함유 복숭아 혼입 가능"]));
+  assert.deepStrictEqual(oneLine.mayContain, ["복숭아"]);
+});
+
+test("괄호가 있는 이름: 쉼표로 나누지 않고 함유, 제조시설 문구 모두 잡는다", () => {
+  const contains = parseLabel(fragmentsFrom(["우유, 조개류(굴, 홍합) 함유"]));
+  assert.deepStrictEqual(contains.allergenText, ["우유", "조개류(굴, 홍합)"]);
+
+  const facility = parseLabel(
+    fragmentsFrom(["이 제품은 메밀, 조개류(굴, 전복)를 사용한 제품과 같은 제조시설에서 제조"]),
+  );
+  assert.deepStrictEqual(facility.mayContain, ["메밀", "조개류(굴,전복)"]);
+});
+
+test("괄호 안 함유 문구: 이름은 잡고 원재료는 유지한다", () => {
+  const r = parseLabel(fragmentsFrom(["원재료명 물엿, 유크림(우유 함유)", "포장재질 폴리에틸렌"]));
+  assert.deepStrictEqual(r.allergenText, ["우유"]);
+  assert.deepStrictEqual(r.ingredients, ["물엿", "유크림(우유 함유)"]);
+});
+
 test("글자가 없어도 죽지 않는다", () => {
   const r = parseLabel([]);
   assert.strictEqual(r.productName, null);
