@@ -17,7 +17,14 @@
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(알레르기는 경고로만 표시) ────────────────────────
+ * ── 이번 변경(OCR 라벨 분석) ────────────────────────────────
+ *   - [추가] POST /recommend/label: 사진에서 읽은 100g당 영양성분으로 판정 (Neo4j 조회 없음)
+ *       판정은 POST /recommend 와 같은 함수(judgeDiseaseNutrition / judgeHealthyNutrition)를 쓴다
+ *       응답은 POST /recommend 형식 + source: "ocr", mayContainAlerts, allergyCheckIncomplete
+ *       DB 에 없는 제품이므로 alternatives 필드는 없다
+ *   - 기존 POST /recommend 는 변경 없음. 프론트 FoodAnalysisPage.tsx OCR 탭이 호출한다
+ *
+ * ── 이전 변경(알레르기는 경고로만 표시) ────────────────────────
  *   - 팀 규칙: 알레르기는 판정 등급에 영향을 주지 않고 경고로만 따로 보여준다
  *   - verdict 는 영양 판정(nutritionVerdict)을 그대로 쓴다 (두 값은 항상 같다)
  *   - allergyOverride 는 항상 false. 더 이상 강제 판정이 없지만 응답 형식 유지를 위해 필드는 남겨 둔다
@@ -60,8 +67,11 @@ const { getSession } = require("../db/neo4j");
 const {
   scoreForDiseaseUser,
   scoreForHealthyUser,
+  judgeDiseaseNutrition,
+  judgeHealthyNutrition,
   getDisplayDailyReference,
 } = require("../services/scoreService");
+const { matchLabelAllergens } = require("../services/labelAllergyService");
 const { checkAllergens, hasAllergenInfo } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
 
@@ -228,6 +238,101 @@ router.post("/", async (req, res) => {
     res.status(500).json({ message: "서버 오류", error: err.message });
   } finally {
     await session.close();
+  }
+});
+
+// 판정에 꼭 필요한 영양성분 키 (foodService.getFoodNutrition 과 같다)
+const LABEL_NUTRITION_KEYS = [
+  "sugar", "sodium", "saturatedFat", "protein", "calories",
+  "carbohydrate", "fat", "transFat", "cholesterol",
+];
+
+// ── POST /recommend/label ────────────────────────────────────
+// OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
+router.post("/label", async (req, res) => {
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings } = req.body;
+
+  if (!userId || !productName) {
+    return res.status(400).json({ message: "userId와 productName은 필수입니다." });
+  }
+
+  // 못 읽은 값(null)을 0 으로 판정하면 결과가 틀어지므로 판정하지 않는다
+  const missing = LABEL_NUTRITION_KEYS.filter((key) => {
+    const value = nutritionPer100g?.[key];
+    return typeof value !== "number" || !Number.isFinite(value) || value < 0;
+  });
+  if (missing.length > 0) {
+    return res.status(400).json({
+      message: `영양성분 값이 비어 있거나 올바르지 않습니다: ${missing.join(", ")}`,
+    });
+  }
+
+  try {
+    const db = await getConnection();
+    const [rows] = await db.execute("SELECT * FROM users WHERE id = ?", [userId]);
+    await db.end();
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+    }
+
+    const user = rows[0];
+    const diseases = Array.isArray(user.diseases)
+      ? user.diseases.map((d) => d.trim())
+      : JSON.parse(user.diseases || "[]").map((d) => d.trim());
+    const allergens = Array.isArray(user.allergens)
+      ? user.allergens.map((a) => a.trim())
+      : JSON.parse(user.allergens || "[]").map((a) => a.trim());
+    const hasDiseases = diseases.length > 0;
+
+    const nutrition = {};
+    for (const key of LABEL_NUTRITION_KEYS) nutrition[key] = nutritionPer100g[key];
+
+    // POST /recommend 와 같은 판정 함수와 같은 질병 심각도 값을 쓴다
+    const result = hasDiseases
+      ? await judgeDiseaseNutrition(nutrition, diseases, user.weight, user.height, user.age, user.gender, {
+          hypertension_stage: user.hypertension_stage || 1,
+          ldl_value: user.ldl_value ?? null,
+          tg_value: user.tg_value ?? null,
+          hdl_value: user.hdl_value ?? null,
+          gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
+        })
+      : judgeHealthyNutrition(nutrition, user.weight, user.height, user.age, user.gender);
+
+    const labelAllergens = Array.isArray(allergenText) ? allergenText : [];
+    const labelMayContain = Array.isArray(mayContain) ? mayContain : [];
+    const foundAllergens = matchLabelAllergens(labelAllergens, allergens);
+
+    // OCR 경고가 있거나 함유 문구가 없으면 "알레르기 없음" 으로 단정할 수 없다
+    const allergyCheckIncomplete =
+      labelAllergens.length === 0 || (Array.isArray(ocrWarnings) && ocrWarnings.length > 0);
+
+    res.json({
+      productName,
+      source: "ocr",
+      userType: hasDiseases ? "disease" : "healthy",
+      diseaseTrack: result.diseaseTrack,
+      verdict: result.verdict,
+      nutritionVerdict: result.verdict,
+      giCategory: result.giCategory,
+      bmi: result.bmi,
+      nutrition: result.nutrition,
+      warnings: result.warnings,
+      reasons: result.reasons,
+      radar: result.radar,
+      carbInfo: result.carbInfo,
+      allergenAlert: foundAllergens,
+      allergens: foundAllergens,
+      allergyOverride: false,
+      // 걸린 성분이 없는데 확인도 끝나지 않았으면 판정 카드의 회색 안내를 띄운다
+      allergyUnknown: allergens.length > 0 && foundAllergens.length === 0 && allergyCheckIncomplete,
+      mayContainAlerts: matchLabelAllergens(labelMayContain, allergens),
+      allergyCheckIncomplete,
+      dailyReference: getDisplayDailyReference(user.gender, user.age),
+    });
+  } catch (err) {
+    console.error("라벨 판정 오류:", err);
+    res.status(500).json({ message: "서버 오류", error: err.message });
   }
 });
 

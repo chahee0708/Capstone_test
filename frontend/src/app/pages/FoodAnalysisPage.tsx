@@ -13,7 +13,12 @@
  *      - 1페이지: 영양소 균형 (NutrientRadarChart)
  *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
  *
- * ── 이번 변경(알레르기는 경고로만 표시) ────────────────────────
+ * ── 이번 변경(OCR 탭 연결) ───────────────────────────────────
+ *   - 사진 선택 → POST /ocr/label → 제품명과 100g당 영양성분 9개를 수정 칸으로 표시, 알레르기 문구 표시
+ *   - "이 값으로 분석하기" → POST /recommend/label → 기존 결과 화면 사용
+ *   - 결과 화면에 혼입 가능 주의, 알레르기 확인 미완료 안내 추가 (OCR 결과에만 값이 있다)
+ *
+ * ── 이전 변경(알레르기는 경고로만 표시) ────────────────────────
  *   - VerdictCard 에 nutritionVerdict 전달 제거 (경고 문구는 VerdictCard 가 allergens 로 표시)
  *   - 응답 타입 필드는 그대로, verdict / nutritionVerdict / allergyOverride 주석만 새 규칙에 맞춤
  *
@@ -104,6 +109,9 @@ type AnalysisResult = {
   allergyUnknown?: boolean;
   // 대체음식 (다음 단계에서 백엔드가 보냄. 필드가 없으면 섹션을 숨긴다)
   alternatives?: Alternative[];
+  // [추가] OCR 결과에만 있는 값: 혼입 가능 성분 중 사용자 알레르기에 걸린 이름, 알레르기 확인 미완료 여부
+  mayContainAlerts?: string[];
+  allergyCheckIncomplete?: boolean;
   // 성별+나이 기반 KDRI 1일 기준값 (프론트 차트 max값으로 사용)
   // 예: 남성 25세 → { 나트륨: 2300, 당류: 130, 탄수화물: 130, 단백질: 65, 식이섬유: 30 }
   dailyReference: {
@@ -117,8 +125,34 @@ type AnalysisResult = {
   };
 };
 
+// OCR 수정 칸에 보여줄 영양성분 9개 (키는 foodService.getFoodNutrition 과 같다)
+const LABEL_NUTRIENTS = [
+  { key: "calories", label: "열량", unit: "kcal" },
+  { key: "sodium", label: "나트륨", unit: "mg" },
+  { key: "carbohydrate", label: "탄수화물", unit: "g" },
+  { key: "sugar", label: "당류", unit: "g" },
+  { key: "fat", label: "지방", unit: "g" },
+  { key: "transFat", label: "트랜스지방", unit: "g" },
+  { key: "saturatedFat", label: "포화지방", unit: "g" },
+  { key: "cholesterol", label: "콜레스테롤", unit: "mg" },
+  { key: "protein", label: "단백질", unit: "g" },
+];
+
+// POST /ocr/label 응답 중 이 화면에서 쓰는 값. 영양성분은 수정할 수 있게 문자열로 보관한다
+type LabelForm = {
+  productName: string;
+  nutrition: Record<string, string>;
+  allergenText: string[];
+  mayContain: string[];
+  warnings: string[];
+};
+
 export function FoodAnalysisPage() {
   const { user, token } = useAuth();
+  // OCR 탭 상태
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isReadingLabel, setIsReadingLabel] = useState(false);
+  const [labelForm, setLabelForm] = useState<LabelForm | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showResults, setShowResults] = useState(false);
@@ -210,6 +244,94 @@ export function FoodAnalysisPage() {
     handleAnalyze(name);
   };
 
+  /** 사진 선택 시: POST /ocr/label 로 글자를 읽어 수정 칸을 채운다 */
+  const handleLabelFile = async (file: File | undefined) => {
+    if (!file) return;
+    setIsReadingLabel(true);
+    setLabelForm(null);
+    setShowResults(false);
+    setErrorMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const response = await fetch(`${API_URL}/ocr/label`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data.error || "라벨을 읽지 못했습니다.");
+        return;
+      }
+
+      // 못 읽은 값(null)은 빈 칸으로 둔다 (0 으로 채우지 않는다)
+      const nutrition: Record<string, string> = {};
+      for (const { key } of LABEL_NUTRIENTS) {
+        const value = data.nutritionPer100g?.[key];
+        nutrition[key] = value === null || value === undefined ? "" : String(value);
+      }
+      setLabelForm({
+        productName: data.productName ?? "",
+        nutrition,
+        allergenText: data.allergenText ?? [],
+        mayContain: data.mayContain ?? [],
+        warnings: data.warnings ?? [],
+      });
+    } catch {
+      setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
+    } finally {
+      setIsReadingLabel(false);
+      // 같은 사진을 다시 골라도 동작하도록 선택을 비운다
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  /** "이 값으로 분석하기": 수정 칸의 값으로 POST /recommend/label 호출 → 기존 결과 화면 */
+  const handleAnalyzeLabel = async () => {
+    if (!labelForm) return;
+    setIsAnalyzing(true);
+    setShowResults(false);
+    setErrorMessage("");
+
+    // 빈 칸은 null 로 보낸다 → 백엔드가 400 으로 막는다
+    const nutritionPer100g: Record<string, number | null> = {};
+    for (const { key } of LABEL_NUTRIENTS) {
+      const value = labelForm.nutrition[key].trim();
+      nutritionPer100g[key] = value === "" ? null : Number(value);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/recommend/label`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          userId: user?.id ?? 1,
+          productName: labelForm.productName.trim(),
+          nutritionPer100g,
+          allergenText: labelForm.allergenText,
+          mayContain: labelForm.mayContain,
+          ocrWarnings: labelForm.warnings,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setErrorMessage(data.message || "분석에 실패했습니다.");
+        return;
+      }
+      setAnalysisResult(data);
+      setShowResults(true);
+    } catch {
+      setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   return (
     <div className="min-h-full bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -286,8 +408,93 @@ export function FoodAnalysisPage() {
             <Card className="p-12 text-center">
               <Camera className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-gray-600 mb-4">영양성분표를 촬영하세요</p>
-              <Button variant="outline">사진 촬영하기</Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleLabelFile(e.target.files?.[0])}
+              />
+              <Button
+                variant="outline"
+                disabled={isReadingLabel}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {isReadingLabel ? "라벨 읽는 중..." : "사진 촬영하기"}
+              </Button>
             </Card>
+
+            {/* 읽은 값 확인·수정 */}
+            {labelForm && (
+              <Card className="p-6 mt-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1" htmlFor="label-product-name">
+                    제품명
+                  </label>
+                  <Input
+                    id="label-product-name"
+                    value={labelForm.productName}
+                    onChange={(e) =>
+                      setLabelForm({ ...labelForm, productName: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">영양성분 (100g당)</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {LABEL_NUTRIENTS.map(({ key, label, unit }) => (
+                      <div key={key}>
+                        <label className="block text-sm text-gray-600 mb-1" htmlFor={`label-${key}`}>
+                          {label} ({unit})
+                        </label>
+                        <Input
+                          id={`label-${key}`}
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={labelForm.nutrition[key]}
+                          onChange={(e) =>
+                            setLabelForm({
+                              ...labelForm,
+                              nutrition: { ...labelForm.nutrition, [key]: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="text-sm text-gray-700 space-y-1">
+                  <p>함유: {labelForm.allergenText.join(", ") || "읽은 문구 없음"}</p>
+                  <p>혼입 가능: {labelForm.mayContain.join(", ") || "읽은 문구 없음"}</p>
+                </div>
+
+                {labelForm.warnings.length > 0 && (
+                  <ul className="text-sm text-amber-700 list-disc pl-5">
+                    {labelForm.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                )}
+
+                <Button
+                  onClick={handleAnalyzeLabel}
+                  disabled={isAnalyzing}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {isAnalyzing ? "분석 중..." : "이 값으로 분석하기"}
+                </Button>
+              </Card>
+            )}
+
+            {errorMessage && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                {errorMessage}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 
@@ -310,6 +517,18 @@ export function FoodAnalysisPage() {
                 allergens={allergens}
                 allergyUnknown={analysisResult.allergyUnknown ?? false}
               />
+
+              {/* ── OCR 결과 안내: 혼입 가능은 함유보다 약한 주의 ── */}
+              {(analysisResult.mayContainAlerts?.length ?? 0) > 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
+                  혼입 가능 주의: {analysisResult.mayContainAlerts?.join(", ")}
+                </div>
+              )}
+              {analysisResult.allergyCheckIncomplete && !analysisResult.allergyUnknown && (
+                <div className="p-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-600 text-sm">
+                  라벨의 알레르기 문구를 모두 확인하지 못했어요. 포장의 원재료를 꼭 확인하세요.
+                </div>
+              )}
 
               {/* ── 2. 대체음식 섹션: 응답에 alternatives 가 있을 때만 (지금은 백엔드가 안 보내서 숨김) ── */}
               {Array.isArray(analysisResult.alternatives) && (
