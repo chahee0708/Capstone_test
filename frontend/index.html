@@ -20,13 +20,12 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Register Service Worker
+      // 서비스 워커는 쓰지 않는다. 예전에 등록된 것이 있으면 해제한다
+      // (예전 서비스 워커가 옛 첫 화면을 계속 보여 줘서 흰 화면이 나오던 문제. public/service-worker.js 참고)
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/service-worker.js')
-            .then(registration => console.log('SW registered:', registration))
-            .catch(error => console.log('SW registration failed:', error));
-        });
+        navigator.serviceWorker.getRegistrations()
+          .then((regs) => regs.forEach((reg) => reg.unregister()))
+          .catch(() => {});
       }
     </script>
   </body>
