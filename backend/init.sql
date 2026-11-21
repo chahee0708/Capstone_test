@@ -54,3 +54,21 @@ VALUES ('김철수', 'user5@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p9
 -- 질병 없는 건강한 사용자
 INSERT INTO users (name, email, password, age, weight, height, gender, diseases, allergens)
 VALUES ('정하나', 'user6@test.com', '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhmW', 30, 58, 163, 'female', '[]', '[]');
+-- [추가] 관심 식품 / 최근 검색 (프로필 "내 식품" 탭)
+-- 기존 DB 에서는 백엔드가 켜질 때 routes/myFoods.js 의 ensureMyFoodTables 가 같은 테이블을 만든다
+CREATE TABLE IF NOT EXISTS user_favorites (
+  user_id    INT          NOT NULL,
+  food_name  VARCHAR(255) NOT NULL,
+  category   VARCHAR(50)  DEFAULT NULL,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, food_name)
+) DEFAULT CHARSET = utf8mb4;
+
+CREATE TABLE IF NOT EXISTS user_recent_searches (
+  user_id     INT          NOT NULL,
+  food_name   VARCHAR(255) NOT NULL,
+  category    VARCHAR(50)  DEFAULT NULL,
+  searched_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (user_id, food_name),
+  INDEX idx_recent_user_time (user_id, searched_at)
+) DEFAULT CHARSET = utf8mb4;

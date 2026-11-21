@@ -46,7 +46,8 @@
  *   - frontend/src/components/AlternativesSection.tsx
  *   - frontend/src/components/NutritionSlideCard.tsx (안에서 NutrientRadarChart, NutritionBreakdownList 사용)
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { Search, Camera, AlertCircle } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -60,20 +61,25 @@ import {
 } from "../components/ui/tabs";
 import { type RadarAxis } from "../../components/NutrientRadarChart";
 import { type Reason, type CarbInfo } from "../../components/VerdictExplanation";
-import { VerdictCard } from "../../components/VerdictCard";
+import { type Alternative } from "../../components/AlternativesSection";
+import { verdictCardFor } from "../../components/VerdictSummaryCard";
+import { AlternativeCards } from "../../components/AlternativeCards";
+import { getCategoryIcon } from "../../components/categoryIcons";
 import {
-  AlternativesSection,
-  type Alternative,
-} from "../../components/AlternativesSection";
-import { NutritionSlideCard } from "../../components/NutritionSlideCard";
+  NutritionFactsCard,
+  type NutritionValues,
+  type IngredientInfo,
+  type ServingInfo,
+  type DailyValues,
+} from "../../components/NutritionFactsCard";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";//백엔드 로컬호스트 값
+const API_URL = import.meta.env.VITE_API_URL || "/api"; // 백엔드는 /api 로 (vite.config.ts 의 proxy 가 백엔드로 넘김)
 
 /**
  * 백엔드 /recommend 응답 타입
  * scoreService.js + recommend.js 반환 구조와 일치해야 함
  */
-type AnalysisResult = {
+export type AnalysisResult = {
   productName: string;
   userType: string;
   diseaseTrack: "diabetes" | "rule" | "healthy";
@@ -82,15 +88,23 @@ type AnalysisResult = {
   // 영양 판정 (verdict 와 같은 값. 응답 형식 유지용)
   nutritionVerdict?: "추천" | "주의" | "비추천";
   giCategory: "Low" | "Medium" | "High" | null;
+  // [추가] 사용자 질병 목록 (판정 카드 "○○ 기준" 문구용)
+  diseases?: string[];
   bmi: string;
-  nutrition: {
-    sugar: number;
-    sodium: number;
-    saturatedFat: number;
-    protein: number;
-    carbohydrate: number;
-    calories: number;
-  };
+  // 100g(또는 100ml)당 영양성분 9개
+  nutrition: NutritionValues;
+  // [추가] 원재료 + 설명 (검색: DB order 순, OCR: 라벨에서 읽은 순서). 설명이 없으면 description null
+  ingredients?: IngredientInfo[];
+  // [추가] 1개 양 / 총 내용량. 없으면 null (100g당만 표시)
+  serving?: ServingInfo | null;
+  // [추가] 음식에 든 알레르기 성분 전체 (사용자와 무관). 정보 없으면 []
+  foodAllergens?: string[];
+  // [추가] 영양정보 표 % 용 개인별 1일 기준치 (성별·나이 KDRI)
+  dailyValues?: DailyValues | null;
+  // [추가] 영양성분 기준 단위
+  unit?: "g" | "ml";
+  // [추가] 통합 중분류 (카테고리 그림용). OCR 결과에는 없다
+  category?: string | null;
   // 구버전 호환용으로 응답에는 남아 있지만 화면에서는 더 이상 쓰지 않는다
   warnings: string[];
   // 판정 근거 줄글용 (VerdictExplanation)
@@ -142,6 +156,7 @@ const LABEL_NUTRIENTS = [
 type LabelForm = {
   productName: string;
   nutrition: Record<string, string>;
+  ingredients: string[];
   allergenText: string[];
   mayContain: string[];
   warnings: string[];
@@ -149,6 +164,10 @@ type LabelForm = {
 
 export function FoodAnalysisPage() {
   const { user, token } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  // 탭: 홈에서 사진을 넘겨받으면 OCR 탭을 열어야 해서 직접 관리
+  const [tab, setTab] = useState<"search" | "ocr">("search");
   // OCR 탭 상태
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isReadingLabel, setIsReadingLabel] = useState(false);
@@ -203,7 +222,9 @@ export function FoodAnalysisPage() {
     setIsAnalyzing(true);
     setShowResults(false);
     setErrorMessage("");
-    setSuggestions([]); // 분석 시작하면 후보 목록 닫기
+    // 분석 시작하면 후보 목록 닫기. 대기 중인 자동완성 요청도 취소 (입력 직후 Enter 시 목록이 다시 뜨던 문제)
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSuggestions([]);
 
     try {
       const response = await fetch(`${API_URL}/recommend`, {
@@ -275,6 +296,7 @@ export function FoodAnalysisPage() {
       setLabelForm({
         productName: data.productName ?? "",
         nutrition,
+        ingredients: data.ingredients ?? [],
         allergenText: data.allergenText ?? [],
         mayContain: data.mayContain ?? [],
         warnings: data.warnings ?? [],
@@ -316,6 +338,7 @@ export function FoodAnalysisPage() {
           allergenText: labelForm.allergenText,
           mayContain: labelForm.mayContain,
           ocrWarnings: labelForm.warnings,
+          ingredients: labelForm.ingredients,
         }),
       });
       const data = await response.json();
@@ -332,6 +355,33 @@ export function FoodAnalysisPage() {
     }
   };
 
+  /**
+   * [추가] 홈 화면에서 넘어온 경우 바로 실행
+   *   { query }     : 검색창에 채우고 분석
+   *   { labelFile } : OCR 탭을 열고 라벨 읽기
+   * 한 번만 실행(개발 모드에서 effect 가 두 번 돌아도 OCR 을 두 번 부르지 않게)하고,
+   * 새로고침 때 다시 실행되지 않도록 넘겨받은 state 를 지운다
+   */
+  const handledHomeRef = useRef(false);
+  useEffect(() => {
+    if (handledHomeRef.current) return;
+    const state = location.state as { query?: string; labelFile?: File } | null;
+    if (!state) return;
+    handledHomeRef.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+
+    if (state.query) {
+      setTab("search");
+      setSearchQuery(state.query);
+      handleAnalyze(state.query);
+    } else if (state.labelFile) {
+      setTab("ocr");
+      handleLabelFile(state.labelFile);
+    }
+    // 처음 한 번만 실행
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="min-h-full bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -342,7 +392,7 @@ export function FoodAnalysisPage() {
           </p>
         </div>
 
-        <Tabs defaultValue="search" className="mb-8">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "search" | "ocr")} className="mb-8">
           {/* 바코드 탭 삭제 → 검색 / OCR 2칸 */}
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="search">
@@ -390,7 +440,7 @@ export function FoodAnalysisPage() {
                 <Button
                   onClick={() => handleAnalyze()}
                   disabled={isAnalyzing}
-                  className="bg-emerald-600 hover:bg-emerald-700"
+                  className="bg-[#388E3C] hover:bg-[#1B5E20]"
                 >
                   {isAnalyzing ? "분석 중..." : "분석"}
                 </Button>
@@ -482,7 +532,7 @@ export function FoodAnalysisPage() {
                 <Button
                   onClick={handleAnalyzeLabel}
                   disabled={isAnalyzing}
-                  className="bg-emerald-600 hover:bg-emerald-700"
+                  className="bg-[#388E3C] hover:bg-[#1B5E20]"
                 >
                   {isAnalyzing ? "분석 중..." : "이 값으로 분석하기"}
                 </Button>
@@ -498,57 +548,40 @@ export function FoodAnalysisPage() {
           </TabsContent>
         </Tabs>
 
-        {showResults && analysisResult && (() => {
-          // 걸린 알레르기: 새 필드 allergens, 없으면 예전 필드 allergenAlert
-          const allergens =
-            analysisResult.allergens ?? analysisResult.allergenAlert ?? [];
-
-          return (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* ── 1. 판정 카드 (알레르기 배지·결론·성분 상자 포함) ── */}
-              {/* key: 제품이 바뀌면 판정 카드 슬라이드도 1페이지부터 */}
-              <VerdictCard
-                key={analysisResult.productName}
-                productName={analysisResult.productName}
-                verdict={analysisResult.verdict}
-                giCategory={analysisResult.giCategory}
-                reasons={analysisResult.reasons ?? []}
-                carbInfo={analysisResult.carbInfo}
-                allergens={allergens}
-                allergyUnknown={analysisResult.allergyUnknown ?? false}
-              />
-
-              {/* ── OCR 결과 안내: 혼입 가능은 함유보다 약한 주의 ── */}
-              {(analysisResult.mayContainAlerts?.length ?? 0) > 0 && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
-                  혼입 가능 주의: {analysisResult.mayContainAlerts?.join(", ")}
-                </div>
-              )}
-              {analysisResult.allergyCheckIncomplete && !analysisResult.allergyUnknown && (
-                <div className="p-3 bg-gray-100 border border-gray-200 rounded-lg text-gray-600 text-sm">
-                  라벨의 알레르기 문구를 모두 확인하지 못했어요. 포장의 원재료를 꼭 확인하세요.
-                </div>
-              )}
-
-              {/* ── 2. 대체음식 섹션: 응답에 alternatives 가 있을 때만 (지금은 백엔드가 안 보내서 숨김) ── */}
-              {Array.isArray(analysisResult.alternatives) && (
-                <AlternativesSection
-                  alternatives={analysisResult.alternatives}
-                  onSelect={handleSelectAlternative}
-                />
-              )}
-
-              {/* ── 3. 영양 정보 슬라이드 카드 (1페이지 영양소 균형 / 2페이지 영양성분 분석) ──
-                  key 로 제품이 바뀌면 1페이지부터 다시 보이게 한다 */}
-              <NutritionSlideCard
-                key={analysisResult.productName}
-                radar={analysisResult.radar ?? []}
-                calories={analysisResult.nutrition.calories}
-                isMlTrack={analysisResult.diseaseTrack === "diabetes"}
-              />
-            </div>
-          );
-        })()}
+        {/* ── 결과 화면: 처음부터 다시 쌓는 중 ──
+            1. 영양성분 + 원재료 카드 (NutritionFactsCard)
+            예전 카드(VerdictCard, AlternativesSection, NutritionSlideCard)는 파일은 그대로 두고
+            화면에서만 뺐다. 하나씩 다시 넣을 예정 */}
+        {showResults && analysisResult && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <NutritionFactsCard
+              key={analysisResult.productName}
+              productName={analysisResult.productName}
+              nutrition={analysisResult.nutrition}
+              ingredients={analysisResult.ingredients ?? []}
+              unit={analysisResult.unit ?? "g"}
+              category={analysisResult.category}
+              serving={analysisResult.serving}
+              allergens={analysisResult.foodAllergens ?? []}
+              myAllergens={analysisResult.allergens ?? analysisResult.allergenAlert ?? []}
+              dailyValues={analysisResult.dailyValues}
+              reasons={analysisResult.reasons ?? []}
+              verdictCard={
+                <>
+                  {verdictCardFor(analysisResult)}
+                  {/* 대체식품: 주의·비추천일 때만 응답에 alternatives 가 온다 */}
+                  {Array.isArray(analysisResult.alternatives) && (
+                    <AlternativeCards
+                      alternatives={analysisResult.alternatives}
+                      icon={getCategoryIcon(analysisResult.category)}
+                      onSelect={handleSelectAlternative}
+                    />
+                  )}
+                </>
+              }
+            />
+          </div>
+        )}
       </div>
     </div>
   );

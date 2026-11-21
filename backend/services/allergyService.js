@@ -87,4 +87,18 @@ async function hasAllergenInfo(session, foodName) {
   return result.records.length > 0 && result.records[0].get("has") === true;
 }
 
-module.exports = { checkAllergens, hasAllergenInfo };
+/**
+ * [추가] 분석 화면 "알레르기 유발성분" 표시용: 음식에 든 알레르기 성분 전체 (사용자와 무관)
+ * 같은 이름의 음식이 여러 개면 합쳐서 중복 없이. 관계가 없으면 [] (정보 없음)
+ * 예) 메로나 → ["우유"]
+ */
+async function getFoodAllergens(session, foodName) {
+  const result = await session.run(
+    `MATCH (f:Food {name: $foodName})-[:CONTAINS_ALLERGEN]->(a:Allergy)
+     RETURN collect(DISTINCT a.name) AS names`,
+    { foodName },
+  );
+  return result.records[0]?.get("names") ?? [];
+}
+
+module.exports = { checkAllergens, hasAllergenInfo, getFoodAllergens };

@@ -93,6 +93,10 @@
 }
 
 @theme inline {
+  /* 기본 글꼴: Pretendard (fonts.css 에서 불러옴). 못 불러오면 기기 기본 글꼴 */
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Segoe UI", Roboto, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -149,6 +153,10 @@
 
   html {
     font-size: var(--font-size);
+    /* 스크롤바를 항상 보이게 한다: 긴 페이지(분석·프로필)에만 스크롤바가 생겨
+       가운데 정렬된 상단바(SafeBite 로고 등)가 페이지마다 좌우로 밀리던 문제.
+       (scrollbar-gutter 는 빈 자리가 흰/초록 줄로 보여서 쓰지 않는다) */
+    overflow-y: scroll;
   }
 
   h1 {

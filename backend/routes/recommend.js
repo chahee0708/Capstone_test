@@ -70,10 +70,14 @@ const {
   judgeDiseaseNutrition,
   judgeHealthyNutrition,
   getDisplayDailyReference,
+  getPersonalDailyValues,
 } = require("../services/scoreService");
 const { matchLabelAllergens } = require("../services/labelAllergyService");
-const { checkAllergens, hasAllergenInfo } = require("../services/allergyService");
+const { checkAllergens, hasAllergenInfo, getFoodAllergens } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
+const { getFoodIngredients } = require("../services/foodService");
+const { withInfo } = require("../services/ingredientInfoService");
+const { recordRecentSearch } = require("./myFoods");
 
 router.post("/", async (req, res) => {
   const { foodName, userId } = req.body;
@@ -211,10 +215,31 @@ router.post("/", async (req, res) => {
     // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
     const dailyReference = getDisplayDailyReference(user.gender, user.age);
 
+    // [추가] 분석 화면 상단용 원재료 목록 + 기준 단위(100g / 100ml)
+    const { ingredients, unit, category, serving } = await getFoodIngredients(session, foodName);
+    // [추가] 음식에 든 알레르기 유발성분 전체 (원재료 아래 표시용)
+    const foodAllergens = await getFoodAllergens(session, foodName);
+
+    // [추가] 최근 검색 기록 (프로필 "내 식품" 탭). 토큰의 사용자로 남긴다.
+    //        기록이 실패해도 분석 응답은 그대로 보낸다 (기다리지 않음)
+    if (req.user?.id) {
+      recordRecentSearch(req.user.id, foodName, category).catch((err) =>
+        console.error("[최근 검색] 기록 실패:", err.message),
+      );
+    }
+
     // ── Step 7. 최종 응답 ──────────────────────────────────────
     res.json({
       productName: foodName,
+      ingredients: withInfo(ingredients), // [추가] [{ name, category, description, source }] (없으면 [])
+      unit, // [추가] 영양성분 기준 단위 "g" | "ml"
+      category, // [추가] 통합 중분류 (예: "아이스크림"). 없으면 null
+      serving, // [추가] { pieceAmount, pieceLabel, totalAmount } 또는 null
+      foodAllergens, // [추가] 음식에 든 알레르기 성분 전체 (예: ["우유", "대두"]). 정보 없으면 []
+      // [추가] 영양정보 표 % 용 개인별 1일 기준치 { energy, values: { calories, sodium, ... } }
+      dailyValues: getPersonalDailyValues(user.gender, user.age),
       userType: hasDiseases ? "disease" : "healthy",
+      diseases, // [추가] 사용자 질병 목록 (판정 카드 "○○ 기준" 문구용). 없으면 []
       diseaseTrack: result.diseaseTrack, // "diabetes" | "rule" | "healthy"
       verdict: nutritionVerdict, // "추천" | "주의" | "비추천" (알레르기와 무관한 영양 판정)
       nutritionVerdict, // 영양 판정 (verdict 와 같은 값. 응답 형식 유지용)
@@ -250,7 +275,7 @@ const LABEL_NUTRITION_KEYS = [
 // ── POST /recommend/label ────────────────────────────────────
 // OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
 router.post("/label", async (req, res) => {
-  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings } = req.body;
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, ingredients } = req.body;
 
   if (!userId || !productName) {
     return res.status(400).json({ message: "userId와 productName은 필수입니다." });
@@ -310,7 +335,14 @@ router.post("/label", async (req, res) => {
     res.json({
       productName,
       source: "ocr",
+      // [추가] 라벨에서 읽은 원재료 + 설명
+      ingredients: withInfo(Array.isArray(ingredients) ? ingredients.map(String) : []),
+      serving: null, // 라벨의 1개 양은 아직 읽지 않는다 → 100g당만
+      foodAllergens: labelAllergens, // [추가] 라벨의 "OO 함유" 문구에서 읽은 성분
+      dailyValues: getPersonalDailyValues(user.gender, user.age), // [추가] 영양정보 표 % 용
+      unit: "g",
       userType: hasDiseases ? "disease" : "healthy",
+      diseases, // [추가] 사용자 질병 목록
       diseaseTrack: result.diseaseTrack,
       verdict: result.verdict,
       nutritionVerdict: result.verdict,

@@ -8,6 +8,16 @@
  *     - 이상지질혈증 → LDL, 중성지방(TG), HDL 수치(mg/dL) 3가지 입력 필드
  *     - 신장병 → GFR 수치 숫자 입력
  *   - 건강검진표 사진 기반 OCR 자동 채우기 기능 연동 (credentials: "include" 적용)
+ *
+ * [추가] 탭 2개로 나눔
+ *   - 내 식품: 관심 식품 / 최근 검색한 식품 (MyFoodsPanel). 처음 열면 이 탭
+ *   - 건강 프로필: 사진으로 입력, 기본 정보, 질환, 심각도, 알레르기, 저장
+ *
+ * [변경] 입력 방식
+ *   - 숫자·이름 칸: 로그인 화면과 같은 밑줄 칸 + 떠오르는 이름표 (FloatingField), 단위는 칸 오른쪽 끝
+ *   - 질환·알레르기: 직접 입력 없이 버튼으로 켜고 끄기 (ToggleChips). 알레르기는 판정이 아는 17개 묶음 전부
+ *     예전에 직접 입력해 저장된 값도 버튼으로 보여서 끌 수 있다
+ *   - 화면 맨 아래 "© 2026 SafeBite"
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -17,20 +27,20 @@ import {
   Heart,
   AlertCircle,
   Save,
-  Plus,
-  X,
+  Check,
   Activity,
   FileText,
   Upload,
 } from "lucide-react";
 import { Card } from "../components/ui/card";
-import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Label } from "../components/ui/label";
-import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { MyFoodsPanel } from "../../components/MyFoodsPanel";
+import { FloatingField } from "../../components/FloatingField";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_URL = import.meta.env.VITE_API_URL || "/api";
 
 // 질병 목록 (갑상선 제거, 만성콩팥병 → 신장병)
 const COMMON_CONDITIONS = [
@@ -40,6 +50,8 @@ const COMMON_CONDITIONS = [
   "이상지질혈증",
   "신장병",
 ];
+// [변경] 알레르기 버튼 17개: 식품 알레르기 판정(allergyService)이 아는 이름·묶음 전부
+//        (data_pipeline/clean/allergen_groups.csv 의 group 열. 견과류 = 잣·호두·헤이즐넛, 갑각류 = 새우·게, 생선 = 고등어, 우유 = 우유·산양유)
 const COMMON_ALLERGIES = [
   "우유",
   "계란",
@@ -47,14 +59,67 @@ const COMMON_ALLERGIES = [
   "견과류",
   "대두",
   "밀",
+  "메밀",
   "갑각류",
   "생선",
+  "조개류",
+  "오징어",
+  "쇠고기",
+  "돼지고기",
+  "닭고기",
+  "복숭아",
+  "토마토",
+  "아황산류",
 ];
+
+/** 버튼 목록 = 기본 목록 + 예전에 직접 입력해 저장된 값 (목록에 없어도 버튼으로 보여서 끌 수 있게) */
+function withSaved(base: string[], saved: string[]) {
+  return [...base, ...saved.filter((s) => !base.includes(s))];
+}
+
+/** 켜고 끄는 버튼 묶음: 켜지면 테마색 바탕 + 체크 표시 */
+function ToggleChips({
+  options,
+  selected,
+  onToggle,
+  label,
+}: {
+  options: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  label: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label={label}>
+      {options.map((opt) => {
+        const on = selected.includes(opt);
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onToggle(opt)}
+            aria-pressed={on}
+            className={`inline-flex items-center gap-1 h-9 px-3.5 rounded-full border text-sm transition-colors ${
+              on
+                ? "bg-[#388E3C] border-[#388E3C] text-white font-medium"
+                : "bg-white border-gray-300 text-gray-700 hover:border-[#388E3C] hover:text-[#1B5E20]"
+            }`}
+          >
+            {on && <Check className="w-4 h-4" aria-hidden />}
+            {opt}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ProfilePage() {
   const { user, token } = useAuth();
   const USER_ID = user?.id ?? 1;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // [추가] 탭: 내 식품(관심·최근 검색) / 건강 프로필(입력·수정). 처음엔 내 식품
+  const [tab, setTab] = useState<"foods" | "health">("foods");
 
   const [profile, setProfile] = useState({
     name: "",
@@ -73,8 +138,6 @@ export function ProfilePage() {
     gfr_value: 35,
   });
 
-  const [newCondition, setNewCondition] = useState("");
-  const [newAllergy, setNewAllergy] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
 
@@ -187,20 +250,13 @@ export function ProfilePage() {
     }
   };
 
-  // ── 질환/알레르기 추가·제거 ──────────────────────────────────
-  const addToList = (key: "diseases" | "allergens", value: string) => {
-    const trimmed = value.trim();
-    if (trimmed && !profile[key].includes(trimmed)) {
-      setProfile((prev) => ({ ...prev, [key]: [...prev[key], trimmed] }));
-      if (key === "diseases") setNewCondition("");
-      else setNewAllergy("");
-    }
-  };
-
-  const removeFromList = (key: "diseases" | "allergens", value: string) => {
+  // ── 질환/알레르기 버튼 켜기·끄기 ─────────────────────────────
+  const toggleInList = (key: "diseases" | "allergens", value: string) => {
     setProfile((prev) => ({
       ...prev,
-      [key]: prev[key].filter((v) => v !== value),
+      [key]: prev[key].includes(value)
+        ? prev[key].filter((v) => v !== value)
+        : [...prev[key], value],
     }));
   };
 
@@ -215,9 +271,24 @@ export function ProfilePage() {
   return (
     <div className="min-h-full bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h1 className="text-2xl md:text-3xl font-bold mb-6">
+          {profile.name ? `${profile.name}님의 프로필` : "프로필"}
+        </h1>
+
+        {/* ── 탭: 내 식품 (관심·최근 검색) / 건강 프로필 (입력·수정) ── */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "foods" | "health")}>
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="foods">내 식품</TabsTrigger>
+            <TabsTrigger value="health">건강 프로필</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="foods">
+            <MyFoodsPanel />
+          </TabsContent>
+
+          <TabsContent value="health">
         <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">건강 프로필</h1>
             <p className="text-gray-600">
               정확한 분석을 위해 건강 정보를 입력해주세요
             </p>
@@ -236,14 +307,14 @@ export function ProfilePage() {
             <Button
               type="button"
               variant="outline"
-              className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 cursor-pointer shadow-sm"
+              className="border-[#388E3C] text-[#1B5E20] hover:bg-[#388E3C]/10 cursor-pointer shadow-sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={isOcrProcessing}
             >
               {isOcrProcessing ? (
-                <Upload className="w-4 h-4 mr-2 animate-bounce text-emerald-600" />
+                <Upload className="w-4 h-4 mr-2 animate-bounce text-[#388E3C]" />
               ) : (
-                <FileText className="w-4 h-4 mr-2 text-emerald-600" />
+                <FileText className="w-4 h-4 mr-2 text-[#388E3C]" />
               )}
               사진으로 입력
             </Button>
@@ -254,46 +325,33 @@ export function ProfilePage() {
           {/* ── 기본 정보 ── */}
           <Card className="p-6">
             <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <User className="w-5 h-5 text-emerald-600" /> 기본 정보
+              <User className="w-5 h-5 text-[#388E3C]" /> 기본 정보
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 로그인 화면과 같은 밑줄 칸 + 떠오르는 이름표 (FloatingField). 숫자 0 은 빈 칸으로 보인다 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
               {(
                 [
-                  { id: "name", label: "이름", type: "text", key: "name" },
-                  { id: "age", label: "나이", type: "number", key: "age" },
-                  {
-                    id: "weight",
-                    label: "몸무게 (kg)",
-                    type: "number",
-                    key: "weight",
-                  },
-                  {
-                    id: "height",
-                    label: "키 (cm)",
-                    type: "number",
-                    key: "height",
-                  },
+                  { id: "name", label: "이름", type: "text", key: "name", suffix: undefined },
+                  { id: "age", label: "나이", type: "number", key: "age", suffix: "세" },
+                  { id: "weight", label: "몸무게", type: "number", key: "weight", suffix: "kg" },
+                  { id: "height", label: "키", type: "number", key: "height", suffix: "cm" },
                 ] as const
               ).map((field) => (
-                <div key={field.id}>
-                  <Label htmlFor={field.id}>{field.label}</Label>
-                  <Input
-                    id={field.id}
-                    type={field.type}
-                    value={(profile as any)[field.key] === 0 && field.type === "number" ? "" : (profile as any)[field.key]}
-                    placeholder={field.type === "number" ? "0" : ""}
-                    className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    onChange={(e) =>
-                      setProfile((prev) => ({
-                        ...prev,
-                        [field.key]:
-                          field.type === "number"
-                            ? parseFloat(e.target.value) || 0
-                            : e.target.value,
-                      }))
-                    }
-                  />
-                </div>
+                <FloatingField
+                  key={field.id}
+                  id={`profile-${field.id}`}
+                  label={field.label}
+                  type={field.type}
+                  inputMode={field.type === "number" ? "decimal" : undefined}
+                  suffix={field.suffix}
+                  value={profile[field.key] === 0 && field.type === "number" ? "" : profile[field.key]}
+                  onChange={(v) =>
+                    setProfile((prev) => ({
+                      ...prev,
+                      [field.key]: field.type === "number" ? parseFloat(v) || 0 : v,
+                    }))
+                  }
+                />
               ))}
             </div>
             <div className="mt-4">
@@ -318,7 +376,7 @@ export function ProfilePage() {
                           gender: e.target.value,
                         }))
                       }
-                      className="w-4 h-4 text-emerald-600"
+                      className="w-4 h-4 text-[#388E3C]"
                     />
                     <span>{opt.label}</span>
                   </label>
@@ -333,53 +391,14 @@ export function ProfilePage() {
               <Heart className="w-5 h-5 text-red-600" /> 건강 질환
             </h3>
 
-            {/* 선택된 질환 뱃지 */}
-            <div className="flex flex-wrap gap-2 mb-3">
-              {profile.diseases.map((d) => (
-                <Badge
-                  key={d}
-                  className="bg-red-100 text-red-700 cursor-pointer"
-                  onClick={() => removeFromList("diseases", d)}
-                >
-                  {d} <X className="w-3 h-3 ml-1" />
-                </Badge>
-              ))}
-            </div>
-
-            {/* 직접 입력 */}
-            <div className="flex gap-2 mb-3">
-              <Input
-                placeholder="질환명 입력"
-                value={newCondition}
-                onChange={(e) => setNewCondition(e.target.value)}
-                onKeyPress={(e) =>
-                  e.key === "Enter" && addToList("diseases", newCondition)
-                }
-              />
-              <Button
-                onClick={() => addToList("diseases", newCondition)}
-                variant="outline"
-              >
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {/* 빠른 선택 */}
-            <div className="flex flex-wrap gap-2">
-              {COMMON_CONDITIONS.filter(
-                (c) => !profile.diseases.includes(c),
-              ).map((c) => (
-                <Badge
-                  key={c}
-                  variant="outline"
-                  className="cursor-pointer hover:bg-emerald-50"
-                  onClick={() => addToList("diseases", c)}
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  {c}
-                </Badge>
-              ))}
-            </div>
+            {/* 버튼으로 켜고 끄기 (직접 입력 없음). 해당하는 것을 모두 누르세요 */}
+            <p className="text-sm text-gray-500 mb-3">해당하는 질환을 모두 눌러 주세요.</p>
+            <ToggleChips
+              options={withSaved(COMMON_CONDITIONS, profile.diseases)}
+              selected={profile.diseases}
+              onToggle={(v) => toggleInList("diseases", v)}
+              label="건강 질환"
+            />
           </Card>
 
           {/* ── 질병 심각도 상세 입력 (조건부 표시) ── */}
@@ -436,54 +455,29 @@ export function ProfilePage() {
                     <p className="text-sm font-medium text-blue-800">
                       이상지질혈증 — 지질 수치 입력 (mg/dL)
                     </p>
-                    <div className="flex items-center gap-3">
-                      <Label className="w-36 text-sm text-gray-700">LDL 콜레스테롤</Label>
-                      <Input
-                        type="number"
-                        placeholder="예: 165"
-                        value={profile.ldl_value ?? ""}
-                        onChange={(e) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            ldl_value: e.target.value === "" ? null : Number(e.target.value),
-                          }))
-                        }
-                        className="w-28"
-                      />
-                      <span className="text-xs text-gray-500">정상 &lt;130 / 경계 130~159 / 높음 160~189 / 매우높음 ≥190</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Label className="w-36 text-sm text-gray-700">중성지방 (TG)</Label>
-                      <Input
-                        type="number"
-                        placeholder="예: 220"
-                        value={profile.tg_value ?? ""}
-                        onChange={(e) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            tg_value: e.target.value === "" ? null : Number(e.target.value),
-                          }))
-                        }
-                        className="w-28"
-                      />
-                      <span className="text-xs text-gray-500">정상 &lt;150 / 경계 150~199 / 높음 200~499 / 매우높음 ≥500</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Label className="w-36 text-sm text-gray-700">HDL 콜레스테롤</Label>
-                      <Input
-                        type="number"
-                        placeholder="예: 38"
-                        value={profile.hdl_value ?? ""}
-                        onChange={(e) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            hdl_value: e.target.value === "" ? null : Number(e.target.value),
-                          }))
-                        }
-                        className="w-28"
-                      />
-                      <span className="text-xs text-gray-500">정상 ≥40 / 낮음(위험) &lt;40</span>
-                    </div>
+                    {/* 지질 수치 3칸: 밑줄 칸 + 떠오르는 이름표, 아래에 기준 범위 작게 */}
+                    {(
+                      [
+                        { key: "ldl_value", label: "LDL 콜레스테롤", hint: "정상 <130 / 경계 130~159 / 높음 160~189 / 매우높음 ≥190" },
+                        { key: "tg_value", label: "중성지방 (TG)", hint: "정상 <150 / 경계 150~199 / 높음 200~499 / 매우높음 ≥500" },
+                        { key: "hdl_value", label: "HDL 콜레스테롤", hint: "정상 ≥40 / 낮음(위험) <40" },
+                      ] as const
+                    ).map((f) => (
+                      <div key={f.key}>
+                        <FloatingField
+                          id={`profile-${f.key}`}
+                          label={f.label}
+                          type="number"
+                          inputMode="decimal"
+                          suffix="mg/dL"
+                          value={profile[f.key] ?? ""}
+                          onChange={(v) =>
+                            setProfile((prev) => ({ ...prev, [f.key]: v === "" ? null : Number(v) }))
+                          }
+                        />
+                        <p className="text-xs text-gray-500 mt-1 px-1">{f.hint}</p>
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -499,24 +493,19 @@ export function ProfilePage() {
                     <p className="text-xs text-gray-500 mb-2">
                       20~50: 중기 / 20 미만: 말기 / 0 입력 시 이식 환자로 처리
                     </p>
-                    <div className="flex items-center gap-2">
-                      <Input
+                    <div className="max-w-xs">
+                      <FloatingField
                         id="gfr_value"
+                        label="GFR"
                         type="number"
-                        min={0}
-                        max={150}
+                        inputMode="decimal"
+                        suffix="mL/min"
                         value={profile.gfr_value}
-                        onChange={(e) =>
-                          setProfile((prev) => ({
-                            ...prev,
-                            gfr_value: parseFloat(e.target.value) || 0,
-                          }))
+                        onChange={(v) =>
+                          setProfile((prev) => ({ ...prev, gfr_value: parseFloat(v) || 0 }))
                         }
-                        className="w-40"
                       />
-                      <span className="text-sm text-gray-500">
-                        mL/min/1.73m²
-                      </span>
+                      <p className="text-xs text-gray-500 mt-1 px-1">단위: mL/min/1.73m²</p>
                     </div>
                   </div>
                 )}
@@ -529,59 +518,32 @@ export function ProfilePage() {
             <h3 className="font-semibold mb-4 flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-amber-600" /> 알레르기
             </h3>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {profile.allergens.map((a) => (
-                <Badge
-                  key={a}
-                  className="bg-amber-100 text-amber-700 cursor-pointer"
-                  onClick={() => removeFromList("allergens", a)}
-                >
-                  {a} <X className="w-3 h-3 ml-1" />
-                </Badge>
-              ))}
-            </div>
-            <div className="flex gap-2 mb-3">
-              <Input
-                placeholder="알레르기 성분 입력"
-                value={newAllergy}
-                onChange={(e) => setNewAllergy(e.target.value)}
-                onKeyPress={(e) =>
-                  e.key === "Enter" && addToList("allergens", newAllergy)
-                }
-              />
-              <Button
-                onClick={() => addToList("allergens", newAllergy)}
-                variant="outline"
-              >
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {COMMON_ALLERGIES.filter(
-                (a) => !profile.allergens.includes(a),
-              ).map((a) => (
-                <Badge
-                  key={a}
-                  variant="outline"
-                  className="cursor-pointer hover:bg-emerald-50"
-                  onClick={() => addToList("allergens", a)}
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  {a}
-                </Badge>
-              ))}
-            </div>
+            {/* 버튼으로 켜고 끄기 (직접 입력 없음). 식품 알레르기 판정이 아는 17개 묶음 */}
+            <p className="text-sm text-gray-500 mb-3">
+              해당하는 알레르기를 모두 눌러 주세요. 견과류는 잣·호두·헤이즐넛, 갑각류는 새우·게, 생선은 고등어를 포함해요.
+            </p>
+            <ToggleChips
+              options={withSaved(COMMON_ALLERGIES, profile.allergens)}
+              selected={profile.allergens}
+              onToggle={(v) => toggleInList("allergens", v)}
+              label="알레르기"
+            />
           </Card>
 
           {/* ── 저장 버튼 ── */}
           <Button
             onClick={handleSaveProfile}
-            className="w-full bg-emerald-600 hover:bg-emerald-700"
+            className="w-full bg-[#388E3C] hover:bg-[#1B5E20]"
             size="lg"
           >
             <Save className="w-5 h-5 mr-2" /> 프로필 저장
           </Button>
         </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* 맨 아래 저작권 표시 (로그인·홈과 같은 문구) */}
+        <footer className="text-center text-xs text-gray-400 pt-12">© 2026 SafeBite</footer>
       </div>
     </div>
   );

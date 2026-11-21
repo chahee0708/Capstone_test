@@ -72,5 +72,46 @@ async function getLimitNutrients(session, diseases) {
   }));
 }
 
+/**
+ * [추가] 분석 화면 상단 "원재료" 표시용: 원재료 이름 배열 (order 순) + 기준 단위(g/ml)
+ * 같은 이름의 음식이 여러 개면 원재료가 많은 쪽을 쓴다 (alternativeService 의 ORIGINAL_QUERY 와 같은 방식)
+ * 기존 데이터는 order 가 없어 저장된 순서 그대로 나온다
+ * 예) 메로나 → { ingredients: ["정제수", "설탕", ...], unit: "ml" }
+ */
+async function getFoodIngredients(session, foodName) {
+  const result = await session.run(
+    `MATCH (f:Food {name: $foodName})
+     OPTIONAL MATCH (f)-[r:HAS_INGREDIENT]->(i:Ingredient)
+     WITH f, r, i ORDER BY r.order
+     WITH f, collect(i.name) AS ingredients
+     RETURN ingredients, f.unified_mid AS category,
+            coalesce(f.serving_unit,
+                     CASE WHEN toLower(f.nutrient_reference_amount) ENDS WITH 'ml' THEN 'ml' ELSE 'g' END) AS unit,
+            f.piece_amount AS pieceAmount, f.piece_label AS pieceLabel, f.total_amount AS totalAmount
+     ORDER BY size(ingredients) DESC
+     LIMIT 1`,
+    { foodName }
+  );
+  if (result.records.length === 0) {
+    return { ingredients: [], unit: "g", category: null, serving: null };
+  }
+  const record = result.records[0];
+  const pieceAmount = record.get("pieceAmount");
+  return {
+    ingredients: record.get("ingredients"),
+    unit: String(record.get("unit")).toLowerCase() === "ml" ? "ml" : "g",
+    // [추가] 통합 중분류 (apply_categories.py 가 넣은 값). 화면의 카테고리 그림에 쓴다
+    category: record.get("category") ?? null,
+    // [추가] 1개 양 / 총 내용량 (apply_servings.py 가 넣은 값). 없으면 null → 화면은 100g당만
+    serving: pieceAmount
+      ? {
+          pieceAmount: toNum(pieceAmount),
+          pieceLabel: record.get("pieceLabel") || "1개",
+          totalAmount: toNum(record.get("totalAmount")),
+        }
+      : null,
+  };
+}
+
 // 외부에서 사용할 수 있도록 함수 export
-module.exports = { getFoodNutrition, getLimitNutrients, toNutrition };
+module.exports = { getFoodNutrition, getLimitNutrients, toNutrition, getFoodIngredients };

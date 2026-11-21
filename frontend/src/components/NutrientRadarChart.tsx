@@ -152,8 +152,8 @@ export function NutrientRadarChart({ data, calories, isMlTrack, hideHeader = fal
           이 그래프와 판정 결과가 달라 보일 수 있다는 점을 미리 알려준다 */}
       {isMlTrack && (
         <p className="text-xs text-amber-600 mt-1">
-          2형 당뇨 판정은 AI 혈당지수 예측으로 이루어지며, 이 그래프는 일반
-          권장량 기준입니다.
+          2형 당뇨 판정은 AI 혈당지수 예측으로 이루어지며, 이 그래프에는
+          반영되지 않습니다.
         </p>
       )}
 

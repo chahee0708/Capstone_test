@@ -33,6 +33,13 @@
  *     scoreForDiseaseUser / scoreForHealthyUser 는 조회 후 위 함수를 부르는 형태로 바뀌었고 결과는 같다.
  *     대체음식 후보는 이미 읽어 온 영양소로 같은 판정 함수를 호출한다.
  *
+ * ── 이번 변경(2형 당뇨 + 다른 질병 동시 보유) ──────────────────
+ *   - [수정] 2형 당뇨가 있으면 ML 판정만 하고 바로 반환하던 문제
+ *       예) 고혈압 + 2형 당뇨 사용자에게 신라면(나트륨 1492mg/100g)이 "추천" 으로 나왔다
+ *     → ML 판정을 질병 하나의 판정으로 보고 규칙 기반 질병들과 합산, 가장 나쁜 판정 채택
+ *   - 2형 당뇨만 있는 사용자의 결과는 이전과 같다 (방사형 축도 그대로 KDRI 기준)
+ *   - diseaseTrack 은 2형 당뇨가 있으면 그대로 "diabetes", giCategory 도 그대로 내려간다
+ *
  * 호출하는 곳: backend/routes/recommend.js, backend/services/alternativeService.js
  */
 
@@ -258,6 +265,42 @@ function getDisplayDailyReference(gender, age) {
   return {
     ...kdri, // 원본 복사 (나트륨/당류/단백질/식이섬유/에너지는 그대로)
     탄수화물: round1(getCarbDisplayLimit(kdri.에너지)), // 130g → 에너지 기반 상한으로 교체
+  };
+}
+
+/**
+ * [추가] 영양정보 표의 "1일 영양성분 기준치에 대한 비율(%)" 용 개인별 1일 기준치
+ *
+ * 식품 라벨은 2,000kcal 기준 고정값을 쓰지만, 여기서는 사용자 성별·나이의 KDRI 에너지로 바꿔 계산한다.
+ * 식은 이 파일의 판정(evaluateHealthy)과 화면용 탄수화물 상한(getCarbDisplayLimit)과 같다.
+ *   열량      : KDRI 에너지
+ *   나트륨    : KDRI 나트륨
+ *   탄수화물  : 에너지 × 65% ÷ 4
+ *   당류      : KDRI 당류
+ *   지방      : 에너지 × 30% ÷ 9
+ *   포화지방  : 에너지 × 7% ÷ 9
+ *   콜레스테롤: 300mg (식품등의 표시기준 1일 영양성분 기준치. 나이·성별 구분 없음)
+ *   단백질    : KDRI 단백질
+ *   트랜스지방: 기준치 없음 (라벨과 같이 % 를 표시하지 않는다)
+ * 판정에는 쓰지 않는다 (표시 전용)
+ *
+ * @returns {{ energy: number, values: object }} values 키는 nutrition 객체 키와 같다
+ */
+function getPersonalDailyValues(gender, age) {
+  const kdri = getDailyReference(gender, age);
+  const energy = kdri.에너지;
+  return {
+    energy,
+    values: {
+      calories: energy,
+      sodium: kdri.나트륨,
+      carbohydrate: round1(getCarbDisplayLimit(energy)),
+      sugar: kdri.당류,
+      fat: round1((energy * 0.3) / 9),
+      saturatedFat: round1((energy * 0.07) / 9),
+      cholesterol: 300,
+      protein: kdri.단백질,
+    },
   };
 }
 
@@ -833,53 +876,44 @@ async function judgeDiseaseNutrition(
   const bmi = calcBMI(weight, height);
   const kdri = getDailyReference(gender, age);
 
-  // ── 트랙 1: 2형 당뇨 → ML 기반 판정 ────────────────────────
-  if (diseases.includes("2형 당뇨")) {
-    const mlResult = await callMLService(nutrition);
-    const giCategory = mlResult.gi_category; // "Low" | "Medium" | "High"
-
-    let verdict;
-    if (giCategory === "High") verdict = "비추천";
-    else if (giCategory === "Medium") verdict = "주의";
-    else verdict = "추천";
-
-    // ML 트랙은 영양소 한도를 쓰지 않으므로 방사형 축은 전부 KDRI 기준이다
-    const radar = buildRadar(nutrition, [], kdri, kdri.에너지);
-
-    // 판정이 "주의"/"비추천"일 때만 근거를 남긴다 (규칙 트랙과 동일한 원칙)
-    const reasons =
-      verdict === "추천"
-        ? []
-        : [
-            {
-              disease: "2형 당뇨",
-              track: "ml", // 프론트가 ML 전용 문장을 쓰도록 구분하는 표시
-              giCategory,
-              verdict,
-              source: SOURCES.ML_GI,
-            },
-          ];
-
-    return {
-      diseaseTrack: "diabetes",
-      verdict,
-      giCategory,
-      warnings: [],
-      reasons,
-      radar,
-      carbInfo: null, // 1형 당뇨 전용 필드 (2형 트랙에서는 항상 null)
-      nutrition,
-      bmi: bmi.toFixed(1),
-    };
-  }
-
-  // ── 트랙 2: 규칙 기반 질병들 ─────────────────────────────────
   // 각 질병별로 독립 판정 후 결과 합산
   const allWarnings = [];
   const allReasons = []; // 판정 근거 줄글용 (질병별 결과를 모두 합침)
   const allLimits = []; // 방사형 그래프 축 기준용
   let worstRank = 0;
 
+  // ── 2형 당뇨 → ML 기반 판정 (질병 하나의 판정으로 취급) ──────────
+  // [변경] 예전에는 여기서 바로 return 해서 함께 가진 고혈압·이상지질혈증 등이 판정되지 않았다
+  //        → ML 판정도 다른 질병과 같이 합산하고, 가장 나쁜 판정을 채택한다
+  const hasType2 = diseases.includes("2형 당뇨");
+  let giCategory = null;
+  if (hasType2) {
+    const mlResult = await callMLService(nutrition);
+    giCategory = mlResult.gi_category; // "Low" | "Medium" | "High"
+
+    let mlVerdict;
+    if (giCategory === "High") mlVerdict = "비추천";
+    else if (giCategory === "Medium") mlVerdict = "주의";
+    else mlVerdict = "추천";
+
+    // 판정이 "주의"/"비추천"일 때만 근거를 남긴다 (규칙 트랙과 동일한 원칙)
+    if (mlVerdict !== "추천") {
+      allReasons.push({
+        disease: "2형 당뇨",
+        track: "ml", // 프론트가 ML 전용 문장을 쓰도록 구분하는 표시
+        giCategory,
+        verdict: mlVerdict,
+        source: SOURCES.ML_GI,
+      });
+    }
+    // ML 은 영양소 한도가 없으므로 limits 는 추가하지 않는다 (방사형 축은 다른 질병 또는 KDRI 기준)
+    worstRank = Math.max(
+      worstRank,
+      LEVEL_RANK[mlVerdict === "비추천" ? "high" : mlVerdict === "주의" ? "mid" : "low"],
+    );
+  }
+
+  // ── 규칙 기반 질병들 ─────────────────────────────────────────
   for (const disease of diseases) {
     let result = null;
 
@@ -934,9 +968,10 @@ async function judgeDiseaseNutrition(
     : null;
 
   return {
-    diseaseTrack: "rule",
+    // 2형 당뇨가 있으면 "diabetes" (프론트가 GI 안내 문구를 띄우는 기준), 없으면 "rule"
+    diseaseTrack: hasType2 ? "diabetes" : "rule",
     verdict,
-    giCategory: null,
+    giCategory, // 2형 당뇨: "Low"|"Medium"|"High", 그 외: null
     warnings: allWarnings,
     reasons: allReasons,
     radar: buildRadar(nutrition, allLimits, kdri, kdri.에너지),
@@ -1010,4 +1045,6 @@ module.exports = {
   getDailyReference,
   // [STEP 1-3] 표시용 dailyReference (탄수화물만 에너지 기반 상한으로 교체됨)
   getDisplayDailyReference,
+  // [추가] 영양정보 표 % 용 개인별 1일 기준치
+  getPersonalDailyValues,
 };
