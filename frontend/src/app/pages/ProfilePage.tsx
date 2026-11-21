@@ -526,7 +526,9 @@ export function ProfilePage() {
             />
             {/* 묶음 안내: 버튼 아래 작게 */}
             <p className="text-xs text-gray-400 mt-3">
-              견과류는 잣·호두·헤이즐넛, 갑각류는 새우·게, 생선은 고등어를 포함해요.
+              견과류는 잣·호두·헤이즐넛,
+              <br />
+              갑각류는 새우·게, 생선은 고등어를 포함해요.
             </p>
           </Card>
 
