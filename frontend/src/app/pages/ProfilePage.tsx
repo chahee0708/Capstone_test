@@ -11,7 +11,7 @@
  *
  * [추가] 탭 2개로 나눔
  *   - 내 식품: 관심 식품 / 최근 검색한 식품 (MyFoodsPanel). 처음 열면 이 탭
- *   - 건강 프로필: 사진으로 입력, 기본 정보, 질환, 심각도, 알레르기, 저장
+ *   - 건강 프로필: 건강검진표로 한번에 입력, 기본 정보, 질환, 심각도, 알레르기, 저장
  *
  * [변경] 입력 방식
  *   - 숫자·이름 칸: 로그인 화면과 같은 밑줄 칸 + 떠오르는 이름표 (FloatingField), 단위는 칸 오른쪽 끝
@@ -23,14 +23,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import {
-  User,
-  Heart,
-  AlertCircle,
   Save,
   Check,
-  Activity,
-  FileText,
-  Upload,
 } from "lucide-react";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -39,6 +33,7 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { MyFoodsPanel } from "../../components/MyFoodsPanel";
 import { FloatingField } from "../../components/FloatingField";
+import checkupIcon from "../../assets/icons/document.png";
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -307,16 +302,25 @@ export function ProfilePage() {
             <Button
               type="button"
               variant="outline"
-              className="border-[#388E3C] text-[#1B5E20] hover:bg-[#388E3C]/10 cursor-pointer shadow-sm"
+              className="gap-1 border-[#388E3C] text-[#1B5E20] hover:bg-[#388E3C]/10 cursor-pointer shadow-sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={isOcrProcessing}
             >
-              {isOcrProcessing ? (
-                <Upload className="w-4 h-4 mr-2 animate-bounce text-[#388E3C]" />
-              ) : (
-                <FileText className="w-4 h-4 mr-2 text-[#388E3C]" />
-              )}
-              사진으로 입력
+              {/* 왼쪽 아이콘 (글자와 간격 4px, 아이콘만 왼쪽으로 2px 더 이동): 문서 그림(assets/icons/document.png)을 마스크로 써서 버튼 글자색(테마색)으로 칠한다
+                  읽는 중에는 깜빡인다 */}
+              <span
+                aria-hidden
+                className={`relative -left-0.5 inline-block w-5 h-5 bg-[#388E3C] ${isOcrProcessing ? "animate-pulse" : ""}`}
+                style={{
+                  maskImage: `url(${checkupIcon})`,
+                  WebkitMaskImage: `url(${checkupIcon})`,
+                  maskSize: "contain",
+                  WebkitMaskSize: "contain",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskRepeat: "no-repeat",
+                }}
+              />
+              건강검진표로 한번에 입력
             </Button>
           </div>
         </div>
@@ -325,7 +329,7 @@ export function ProfilePage() {
           {/* ── 기본 정보 ── */}
           <Card className="p-6">
             <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <User className="w-5 h-5 text-[#388E3C]" /> 기본 정보
+              기본 정보
             </h3>
             {/* 로그인 화면과 같은 밑줄 칸 + 떠오르는 이름표 (FloatingField). 숫자 0 은 빈 칸으로 보인다 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
@@ -386,13 +390,13 @@ export function ProfilePage() {
           </Card>
 
           {/* ── 질환 ── */}
-          <Card className="p-6">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <Heart className="w-5 h-5 text-red-600" /> 건강 질환
+          <Card className="p-6 gap-0">
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              건강 질환
             </h3>
 
             {/* 버튼으로 켜고 끄기 (직접 입력 없음). 해당하는 것을 모두 누르세요 */}
-            <p className="text-sm text-gray-500 mb-3">해당하는 질환을 모두 눌러 주세요.</p>
+            <p className="text-sm text-gray-500 mb-5">해당하는 질환을 모두 눌러 주세요.</p>
             <ToggleChips
               options={withSaved(COMMON_CONDITIONS, profile.diseases)}
               selected={profile.diseases}
@@ -405,7 +409,6 @@ export function ProfilePage() {
           {hasDetailNeeded && (
             <Card className="p-6 border-2 border-amber-200 bg-amber-50">
               <h3 className="font-semibold mb-4 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-amber-600" />
                 질병 상세 정보
                 <span className="text-sm font-normal text-amber-700 ml-1">
                   — 더 정확한 분석을 위해 입력해주세요
@@ -455,16 +458,16 @@ export function ProfilePage() {
                     <p className="text-sm font-medium text-blue-800">
                       이상지질혈증 — 지질 수치 입력 (mg/dL)
                     </p>
-                    {/* 지질 수치 3칸: 밑줄 칸 + 떠오르는 이름표, 아래에 기준 범위 작게 */}
+                    {/* 지질 수치 3칸: 밑줄 칸 + 떠오르는 이름표 (기준 범위 안내는 사용자에게 필요 없어 뺐다) */}
                     {(
                       [
-                        { key: "ldl_value", label: "LDL 콜레스테롤", hint: "정상 <130 / 경계 130~159 / 높음 160~189 / 매우높음 ≥190" },
-                        { key: "tg_value", label: "중성지방 (TG)", hint: "정상 <150 / 경계 150~199 / 높음 200~499 / 매우높음 ≥500" },
-                        { key: "hdl_value", label: "HDL 콜레스테롤", hint: "정상 ≥40 / 낮음(위험) <40" },
+                        { key: "ldl_value", label: "LDL 콜레스테롤" },
+                        { key: "tg_value", label: "중성지방 (TG)" },
+                        { key: "hdl_value", label: "HDL 콜레스테롤" },
                       ] as const
                     ).map((f) => (
-                      <div key={f.key}>
-                        <FloatingField
+                      <FloatingField
+                          key={f.key}
                           id={`profile-${f.key}`}
                           label={f.label}
                           type="number"
@@ -475,8 +478,6 @@ export function ProfilePage() {
                             setProfile((prev) => ({ ...prev, [f.key]: v === "" ? null : Number(v) }))
                           }
                         />
-                        <p className="text-xs text-gray-500 mt-1 px-1">{f.hint}</p>
-                      </div>
                     ))}
                   </div>
                 )}
@@ -490,9 +491,6 @@ export function ProfilePage() {
                     >
                       GFR 수치 (사구체 여과율)
                     </Label>
-                    <p className="text-xs text-gray-500 mb-2">
-                      20~50: 중기 / 20 미만: 말기 / 0 입력 시 이식 환자로 처리
-                    </p>
                     <div className="max-w-xs">
                       <FloatingField
                         id="gfr_value"
@@ -514,20 +512,22 @@ export function ProfilePage() {
           )}
 
           {/* ── 알레르기 ── */}
-          <Card className="p-6">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-amber-600" /> 알레르기
+          <Card className="p-6 gap-0">
+            <h3 className="font-semibold mb-1 flex items-center gap-2">
+              알레르기
             </h3>
             {/* 버튼으로 켜고 끄기 (직접 입력 없음). 식품 알레르기 판정이 아는 17개 묶음 */}
-            <p className="text-sm text-gray-500 mb-3">
-              해당하는 알레르기를 모두 눌러 주세요. 견과류는 잣·호두·헤이즐넛, 갑각류는 새우·게, 생선은 고등어를 포함해요.
-            </p>
+            <p className="text-sm text-gray-500 mb-5">해당하는 알레르기를 모두 눌러 주세요.</p>
             <ToggleChips
               options={withSaved(COMMON_ALLERGIES, profile.allergens)}
               selected={profile.allergens}
               onToggle={(v) => toggleInList("allergens", v)}
               label="알레르기"
             />
+            {/* 묶음 안내: 버튼 아래 작게 */}
+            <p className="text-xs text-gray-400 mt-3">
+              견과류는 잣·호두·헤이즐넛, 갑각류는 새우·게, 생선은 고등어를 포함해요.
+            </p>
           </Card>
 
           {/* ── 저장 버튼 ── */}

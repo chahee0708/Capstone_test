@@ -102,6 +102,21 @@ export function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // [추가] 상단 SafeBite 로고나 휴대폰 아래 "홈" 을 누르면 ({ resetHome }) 처음 검색 화면으로 되돌린다
+  //        이미 홈에 있어도 동작하도록 location.key(누를 때마다 바뀜)를 본다
+  useEffect(() => {
+    const state = location.state as { resetHome?: boolean } | null;
+    if (!state?.resetHome) return;
+    clear();
+    setQuery("");
+    setResult(null);
+    setErrorMessage("");
+    setLabelFile(null);
+    setPreviousName(null);
+    window.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
   /**
    * 검색: POST /recommend 로 분석해서 이 화면 아래에 결과를 보여준다. 후보를 누르면 그 이름으로
    * fromName: 대체식품 카드에서 넘어온 경우 원래 제품 이름 (돌아가기 링크에 쓴다)

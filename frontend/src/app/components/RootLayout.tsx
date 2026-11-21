@@ -33,7 +33,7 @@ export function RootLayout() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* 로고: 아이콘 없이 글자만, 브랜드색. 누르면 홈 (상단 메뉴에 "홈" 이 없어서 이것이 홈 버튼) */}
-            <Link to="/" aria-label="SafeBite 홈" className="font-bold text-xl text-[#388E3C]">
+            <Link to="/" state={{ resetHome: true }} aria-label="SafeBite 홈" className="font-bold text-xl text-[#388E3C]">
               SafeBite
             </Link>
             {/* 노트북 상단 메뉴: 아이콘 없이 글자만.
@@ -86,6 +86,8 @@ export function RootLayout() {
               <Link
                 key={item.path}
                 to={item.path}
+                // 홈은 누를 때마다 처음 검색 화면으로 (HomePage 의 resetHome)
+                state={item.path === "/" ? { resetHome: true } : undefined}
                 className={`flex flex-col items-center gap-1 py-3 px-4 flex-1 ${
                   isActive ? "text-[#388E3C]" : "text-gray-600"
                 }`}
