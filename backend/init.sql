@@ -60,15 +60,19 @@ CREATE TABLE IF NOT EXISTS user_favorites (
   user_id    INT          NOT NULL,
   food_name  VARCHAR(255) NOT NULL,
   category   VARCHAR(50)  DEFAULT NULL,
+  source     VARCHAR(10)  NOT NULL DEFAULT 'db',   -- 'db' 식품명 검색 / 'label' 사진(라벨)
+  label_data JSON         DEFAULT NULL,           -- 사진 결과를 다시 분석할 값
   created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, food_name)
+  PRIMARY KEY (user_id, food_name, source)
 ) DEFAULT CHARSET = utf8mb4;
 
 CREATE TABLE IF NOT EXISTS user_recent_searches (
   user_id     INT          NOT NULL,
   food_name   VARCHAR(255) NOT NULL,
   category    VARCHAR(50)  DEFAULT NULL,
+  source      VARCHAR(10)  NOT NULL DEFAULT 'db',
+  label_data  JSON         DEFAULT NULL,
   searched_at DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (user_id, food_name),
+  PRIMARY KEY (user_id, food_name, source),
   INDEX idx_recent_user_time (user_id, searched_at)
 ) DEFAULT CHARSET = utf8mb4;

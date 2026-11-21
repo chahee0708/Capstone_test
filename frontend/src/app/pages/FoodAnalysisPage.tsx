@@ -64,6 +64,7 @@ import { type RadarAxis } from "../../components/NutrientRadarChart";
 import { type Reason, type CarbInfo } from "../../components/VerdictExplanation";
 import { type Alternative } from "../../components/AlternativesSection";
 import { verdictCardFor } from "../../components/VerdictSummaryCard";
+import type { LabelInput } from "../../components/myFoodsApi";
 import { AlternativeCards } from "../../components/AlternativeCards";
 import { getCategoryIcon } from "../../components/categoryIcons";
 import {
@@ -102,6 +103,9 @@ export type AnalysisResult = {
   foodAllergens?: string[];
   // [추가] 영양정보 표 % 용 개인별 1일 기준치 (성별·나이 KDRI)
   dailyValues?: DailyValues | null;
+  // [추가] 사진(라벨) 결과면 "ocr" + 다시 분석할 값 (관심 식품·최근 검색에 저장)
+  source?: "ocr";
+  labelInput?: LabelInput;
   // [추가] 영양성분 기준 단위
   unit?: "g" | "ml";
   // [추가] 통합 중분류 (카테고리 그림용). OCR 결과에는 없다

@@ -345,9 +345,29 @@ router.post("/label", async (req, res) => {
     const allergyCheckIncomplete =
       labelAllergens.length === 0 || (Array.isArray(ocrWarnings) && ocrWarnings.length > 0);
 
+    // [추가] 이 사진 분석을 나중에 그대로 다시 할 수 있는 값 (프로필 "내 식품" 에서 누르면 이 값으로 다시 분석)
+    //        사용자 건강 정보는 넣지 않는다 → 다시 분석할 때 그때의 프로필로 판정된다
+    const labelInput = {
+      productName,
+      nutritionPer100g: nutrition,
+      allergenText: labelAllergens,
+      mayContain: labelMayContain,
+      ocrWarnings: Array.isArray(ocrWarnings) ? ocrWarnings : [],
+      ingredients: Array.isArray(ingredients) ? ingredients.map(String) : [],
+      basis: basis ?? null,
+    };
+
+    // [추가] 최근 검색에 사진 결과도 남긴다 (출처 "label"). 실패해도 분석 응답은 그대로
+    if (req.user?.id) {
+      recordRecentSearch(req.user.id, productName, null, "label", labelInput).catch((err) =>
+        console.error("[최근 검색] 사진 결과 기록 실패:", err.message),
+      );
+    }
+
     res.json({
       productName,
       source: "ocr",
+      labelInput, // [추가] 관심 식품 저장·다시 분석용
       // [추가] 라벨에서 읽은 원재료 + 설명
       ingredients: withInfo(Array.isArray(ingredients) ? ingredients.map(String) : []),
       serving: labelServing(basis), // [변경] 라벨 기준량(예: 총 내용량 150g)을 결과 화면 기본 "1개" 양으로

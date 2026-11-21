@@ -20,7 +20,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Search, Camera, AlertCircle, ArrowLeft, Heart } from "lucide-react";
-import { fetchMyFoods, addFavorite, removeFavorite } from "../../components/myFoodsApi";
+import {
+  fetchMyFoods,
+  addFavorite,
+  removeFavorite,
+  favoriteKey,
+  type LabelInput,
+} from "../../components/myFoodsApi";
 import { AlternativeCards } from "../../components/AlternativeCards";
 import { getCategoryIcon } from "../../components/categoryIcons";
 import { useAuth } from "../../contexts/AuthContext";
@@ -64,40 +70,47 @@ export function HomePage() {
   const [previousName, setPreviousName] = useState<string | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
-  // 관심 식품 이름 목록 (결과 제품명 옆 하트가 채워졌는지 판단). 처음 한 번 불러온다
-  const [favoriteNames, setFavoriteNames] = useState<Set<string>>(new Set());
+  // 관심 식품 키 목록 ("db:초코파이", "label:연세우유…" — 결과 제품명 옆 하트가 채워졌는지 판단). 처음 한 번 불러온다
+  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
   useEffect(() => {
     fetchMyFoods(token)
-      .then((data) => setFavoriteNames(new Set(data.favorites.map((f) => f.name))))
+      .then((data) => setFavoriteKeys(new Set(data.favorites.map((f) => favoriteKey(f.source, f.name)))))
       .catch(() => {}); // 못 불러와도 검색은 되게 (하트만 빈 채로)
   }, [token]);
 
-  /** 하트: 관심 식품에 넣기/빼기. 화면은 바로 바꾸고, 실패하면 되돌린다 */
-  const toggleFavorite = async (name: string, category: string | null | undefined) => {
-    const wasFavorite = favoriteNames.has(name);
-    const next = new Set(favoriteNames);
-    if (wasFavorite) next.delete(name);
-    else next.add(name);
-    setFavoriteNames(next);
+  /**
+   * 하트: 관심 식품에 넣기/빼기. 화면은 바로 바꾸고, 실패하면 되돌린다
+   * labelInput 이 있으면 사진(라벨) 결과 → 다시 분석할 값과 함께 저장
+   */
+  const toggleFavorite = async (name: string, category: string | null | undefined, labelInput?: LabelInput | null) => {
+    const source = labelInput ? "label" : "db";
+    const key = favoriteKey(source, name);
+    const wasFavorite = favoriteKeys.has(key);
+    const next = new Set(favoriteKeys);
+    if (wasFavorite) next.delete(key);
+    else next.add(key);
+    setFavoriteKeys(next);
     try {
-      if (wasFavorite) await removeFavorite(token, name);
-      else await addFavorite(token, name, category ?? null);
+      if (wasFavorite) await removeFavorite(token, name, source);
+      else await addFavorite(token, name, category ?? null, labelInput ?? null);
     } catch {
-      setFavoriteNames(favoriteNames);
+      setFavoriteKeys(favoriteKeys);
     }
   };
 
-  // 프로필 "내 식품" 에서 식품을 눌러 넘어온 경우 ({ query }) 바로 검색. 새로고침 때 다시 하지 않게 state 를 지운다
+  // 프로필 "내 식품" 에서 식품을 눌러 넘어온 경우 바로 분석. 새로고침 때 다시 하지 않게 state 를 지운다
+  //   { query }: 식품명 검색 / { label }: 사진(라벨) 결과 → 저장해 둔 값으로 다시 분석
   const location = useLocation();
   const navigate = useNavigate();
   const handledStateRef = useRef(false);
   useEffect(() => {
     if (handledStateRef.current) return;
-    const state = location.state as { query?: string } | null;
-    if (!state?.query) return;
+    const state = location.state as { query?: string; label?: LabelInput } | null;
+    if (!state?.query && !state?.label) return;
     handledStateRef.current = true;
     navigate(location.pathname, { replace: true, state: null });
-    handleSearch(state.query);
+    if (state.label) handleLabelAgain(state.label);
+    else if (state.query) handleSearch(state.query);
     // 처음 한 번만
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -143,6 +156,41 @@ export function HomePage() {
       if (!response.ok) {
         setResult(null);
         setErrorMessage(data.message || "음식을 찾을 수 없습니다.");
+        return;
+      }
+      setResult(data);
+    } catch {
+      setResult(null);
+      setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  /**
+   * [추가] 저장해 둔 사진(라벨) 값으로 다시 분석: POST /recommend/label
+   *   사진을 다시 찍지 않아도 지금의 건강 프로필로 다시 판정한다
+   */
+  const handleLabelAgain = async (label: LabelInput) => {
+    clear();
+    setQuery("");
+    setPreviousName(null);
+    setLabelFile(null);
+    setIsAnalyzing(true);
+    setErrorMessage("");
+    try {
+      const response = await fetch(`${API_URL}/recommend/label`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ userId: user?.id ?? 1, ...label }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setResult(null);
+        setErrorMessage(data.message || "분석에 실패했습니다.");
         return;
       }
       setResult(data);
@@ -366,27 +414,24 @@ export function HomePage() {
                 dailyValues={result.dailyValues}
                 reasons={result.reasons ?? []}
                 headerAction={
-                  // 관심 식품 하트: DB 에 있는 식품(검색 결과)만. 사진(OCR) 결과는 나중에 다시 검색할 수 없어서 뺀다
-                  (result as { source?: string }).source !== "ocr" && (
-                    <button
-                      type="button"
-                      onClick={() => toggleFavorite(result.productName, result.category)}
-                      aria-pressed={favoriteNames.has(result.productName)}
-                      aria-label={
-                        favoriteNames.has(result.productName) ? "관심 식품에서 빼기" : "관심 식품에 추가"
-                      }
-                      title={favoriteNames.has(result.productName) ? "관심 식품에서 빼기" : "관심 식품에 추가"}
-                      className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100"
-                    >
-                      <Heart
-                        className={`w-6 h-6 ${
-                          favoriteNames.has(result.productName)
-                            ? "fill-red-500 text-red-500"
-                            : "text-gray-400"
-                        }`}
-                      />
-                    </button>
-                  )
+                  // 관심 식품 하트: 식품명 검색 결과 + 사진(라벨) 결과 모두. 사진 결과는 다시 분석할 값(labelInput)과 함께 저장
+                  (() => {
+                    const labelInput = result.source === "ocr" ? result.labelInput ?? null : null;
+                    if (result.source === "ocr" && !labelInput) return null; // 예전 응답 대비
+                    const isFav = favoriteKeys.has(favoriteKey(labelInput ? "label" : "db", result.productName));
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(result.productName, result.category, labelInput)}
+                        aria-pressed={isFav}
+                        aria-label={isFav ? "관심 식품에서 빼기" : "관심 식품에 추가"}
+                        title={isFav ? "관심 식품에서 빼기" : "관심 식품에 추가"}
+                        className="w-11 h-11 flex items-center justify-center rounded-full hover:bg-gray-100"
+                      >
+                        <Heart className={`w-6 h-6 ${isFav ? "fill-red-500 text-red-500" : "text-gray-400"}`} />
+                      </button>
+                    );
+                  })()
                 }
                 verdictCard={
                   <>
