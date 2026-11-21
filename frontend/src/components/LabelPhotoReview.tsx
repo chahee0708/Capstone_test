@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { prepareImageForOcr } from "./prepareImageForOcr";
 import { Button } from "../app/components/ui/button";
 import { Input } from "../app/components/ui/input";
 import { Card } from "../app/components/ui/card";
@@ -42,6 +43,8 @@ type LabelForm = {
   allergenText: string[];
   mayContain: string[];
   warnings: string[];
+  // [추가] 라벨의 기준량 (예: { amount: 150, unit: "g", text: "총 내용량(150 g)당" }). 결과 화면 기본 "1개" 양으로 쓴다
+  basis: { amount: number; unit: string; text: string } | null;
 };
 
 type Props = {
@@ -62,7 +65,7 @@ export function LabelPhotoReview({ file, onResult }: Props) {
     (async () => {
       try {
         const formData = new FormData();
-        formData.append("image", file);
+        formData.append("image", await prepareImageForOcr(file)); // 방향 바로잡고 크기 줄여서 (prepareImageForOcr)
         const response = await fetch(`${API_URL}/ocr/label`, {
           method: "POST",
           headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -87,6 +90,7 @@ export function LabelPhotoReview({ file, onResult }: Props) {
           allergenText: data.allergenText ?? [],
           mayContain: data.mayContain ?? [],
           warnings: data.warnings ?? [],
+          basis: data.basis ?? null,
         });
       } catch {
         if (!cancelled) setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
@@ -129,6 +133,7 @@ export function LabelPhotoReview({ file, onResult }: Props) {
           mayContain: form.mayContain,
           ocrWarnings: form.warnings,
           ingredients: form.ingredients,
+          basis: form.basis, // [추가] 결과 화면의 기본 기준량(1개)으로
         }),
       });
       const data = await response.json();

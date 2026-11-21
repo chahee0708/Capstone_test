@@ -22,6 +22,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { prepareImageForOcr } from "../../components/prepareImageForOcr";
 import {
   Save,
   Check,
@@ -172,7 +173,7 @@ export function ProfilePage() {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append("image", file);
+    formData.append("image", await prepareImageForOcr(file)); // 방향 바로잡고 크기 줄여서 (prepareImageForOcr)
 
     setIsOcrProcessing(true);
     const toastId = toast.loading("건강검진표를 판독하고 있습니다...");

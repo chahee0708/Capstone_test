@@ -157,6 +157,18 @@ function findBasis(lines, warnings) {
     .filter((m) => m && parseFloat(m[2]) > 0);
 
   if (found.length === 0) {
+    // [추가] "총 내용량당" 처럼 숫자 없이 쓰인 기준량: 다른 줄의 "총 내용량 150g" / "중량 150 g" 에서 양을 가져온다
+    //        예) 연세우유 솔티카라멜생크림빵: 표 머리 "총 내용량 150g", 열 제목 "총 내용량당"
+    if (lines.some((l) => /총\s*내\s*용\s*량\s*당/.test(l.text))) {
+      const total =
+        lines.map((l) => l.text.match(/총\s*내\s*용\s*량\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(g|ml)/i)).find(Boolean) ||
+        lines.map((l) => l.text.match(/(?:^|\s)(?:내\s*용\s*량|중\s*량)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(g|ml)/i)).find(Boolean);
+      if (total && parseFloat(total[1]) > 0) {
+        const amount = parseFloat(total[1]);
+        const unit = total[2].toLowerCase();
+        return { amount, unit, text: `총 내용량(${amount} ${unit})당` };
+      }
+    }
     warnings.push("기준량(예: 1봉지(55 g)당)을 찾지 못해 100g당 환산을 하지 못했습니다.");
     return null;
   }
@@ -184,6 +196,28 @@ function findCalories(lines, pattern) {
   return null;
 }
 
+/**
+ * [추가] 표 모양 라벨에서 이름 칸과 값 칸이 다른 줄로 나뉜 경우의 값
+ *   예) "나트륨"(x 341~382) 과 "310 mg"(x 426~482) 이 같은 높이에 따로 있음
+ *   이름이 딱 그 영양성분인 줄을 찾고, 같은 높이(세로로 절반 이상 겹침) 오른쪽 줄 중
+ *   "숫자 + 단위" 만 있는 가장 가까운 칸을 값으로 쓴다. 오른쪽 "16%" 칸은 단위가 달라 잡히지 않는다
+ */
+function rowValue(lines, { name, unit }) {
+  const valueOnly = new RegExp(`^${NUMBER}\\s*${unit}$`, "i");
+  for (const nameLine of lines.filter((l) => l.compact === name)) {
+    const h = height(nameLine);
+    const cell = lines
+      .filter((l) => {
+        if (l === nameLine || l.x0 < nameLine.x1 - 2) return false;
+        const overlap = Math.min(l.y1, nameLine.y1) - Math.max(l.y0, nameLine.y0);
+        return overlap >= Math.min(h, height(l)) * 0.5 && valueOnly.test(l.text.trim());
+      })
+      .sort((a, b) => a.x0 - b.x0)[0];
+    if (cell) return cell.text.trim().match(valueOnly)[1];
+  }
+  return null;
+}
+
 /** 영양성분 9개 원본값. 못 찾으면 null + warnings */
 function findNutrition(lines, warnings) {
   const nutrition = {};
@@ -193,7 +227,10 @@ function findNutrition(lines, warnings) {
     if (nutrient.key === "calories") {
       raw = findCalories(lines, pattern);
     } else {
-      raw = lines.map((l) => l.text.match(pattern)).find(Boolean)?.[1] ?? null;
+      raw =
+        lines.map((l) => l.text.match(pattern)).find(Boolean)?.[1] ??
+        // [추가] 표 칸이 나뉘어 이름과 값이 다른 줄일 때: 같은 높이 오른쪽 칸에서 "숫자 + 단위"
+        rowValue(lines, nutrient);
     }
     nutrition[nutrient.key] = raw === null ? null : parseFloat(raw.replace(/,/g, ""));
     if (raw === null) warnings.push(`${nutrient.name} 값을 찾지 못했습니다.`);
@@ -406,7 +443,14 @@ function findMayContain(lines) {
   const paragraphs = toParagraphs(lines).flatMap((p) => p.split(/(?<!포)함유/));
   const names = MAY_CONTAIN_PATTERNS.flatMap((pattern) => collectNames(paragraphs, pattern))
     // 문단을 이으면 앞줄 글자가 섞일 수 있어 문구 바로 앞 낱말만 쓴다 (괄호 안 띄어쓰기는 낱말을 나누지 않게 제거)
-    .map((name) => name.replace(/\([^()]*\)/g, (m) => m.replace(/\s+/g, "")).split(/\s+/).pop())
+    .map((name) => {
+      const words = name.replace(/\([^()]*\)/g, (m) => m.replace(/\s+/g, "")).split(/\s+/);
+      const last = words.pop();
+      // [추가] 줄 끝에서 잘린 이름 잇기: "토" + "마토" → 토마토, "메" + "밀" → 메밀
+      //        앞 낱말과 이은 것이 알레르기 이름이면 이은 것을 쓴다 ("밀" 처럼 혼자도 이름인 경우보다 우선)
+      const joined = words.length ? words[words.length - 1] + last : null;
+      return joined && isKnownAllergen(joined) ? joined : last;
+    })
     .filter((name) => !name.includes("제품"));
   return [...new Set(names)];
 }

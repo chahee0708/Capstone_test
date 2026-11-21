@@ -272,10 +272,23 @@ const LABEL_NUTRITION_KEYS = [
   "carbohydrate", "fat", "transFat", "cholesterol",
 ];
 
+/**
+ * [추가] 라벨 기준량 → 결과 화면의 serving ({ pieceAmount, pieceLabel, totalAmount })
+ *   "1봉지(55 g)당" → 1봉지 55g / "총 내용량(150 g)당", "100 g당" 등 → 1개 150g
+ *   값이 이상하면 null (결과 화면은 100g당만)
+ */
+function labelServing(basis) {
+  const amount = Number(basis?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const word = String(basis.text || "").replace(/\s+/g, "").match(/^1([가-힣]+?)\(/);
+  const pieceLabel = word && !/내용량/.test(word[1]) ? `1${word[1]}` : "1개";
+  return { pieceAmount: amount, pieceLabel, totalAmount: amount };
+}
+
 // ── POST /recommend/label ────────────────────────────────────
 // OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
 router.post("/label", async (req, res) => {
-  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, ingredients } = req.body;
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, ingredients, basis } = req.body;
 
   if (!userId || !productName) {
     return res.status(400).json({ message: "userId와 productName은 필수입니다." });
@@ -337,10 +350,10 @@ router.post("/label", async (req, res) => {
       source: "ocr",
       // [추가] 라벨에서 읽은 원재료 + 설명
       ingredients: withInfo(Array.isArray(ingredients) ? ingredients.map(String) : []),
-      serving: null, // 라벨의 1개 양은 아직 읽지 않는다 → 100g당만
+      serving: labelServing(basis), // [변경] 라벨 기준량(예: 총 내용량 150g)을 결과 화면 기본 "1개" 양으로
       foodAllergens: labelAllergens, // [추가] 라벨의 "OO 함유" 문구에서 읽은 성분
       dailyValues: getPersonalDailyValues(user.gender, user.age), // [추가] 영양정보 표 % 용
-      unit: "g",
+      unit: basis?.unit === "ml" ? "ml" : "g", // [변경] 라벨 기준량 단위 (없으면 g)
       userType: hasDiseases ? "disease" : "healthy",
       diseases, // [추가] 사용자 질병 목록
       diseaseTrack: result.diseaseTrack,

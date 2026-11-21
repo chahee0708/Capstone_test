@@ -269,7 +269,18 @@ router.post('/label', authMiddleware, upload.single('image'), async (req, res) =
     }
 
     const fields = await callClovaGeneral(req.file, 'food_label');
-    res.json(parseLabel(fields));
+    const parsed = parseLabel(fields);
+
+    // [추가] 진단용 로그: 휴대폰 사진이 잘 안 읽힐 때 원인을 보려고 (사진 정보, 읽은 글자 수, 찾은 값, 경고)
+    const found = Object.values(parsed.nutritionPer100g || {}).filter((v) => v !== null && v !== undefined).length;
+    console.log(
+      `[OCR Label] 파일=${req.file.originalname} ${req.file.mimetype} ${Math.round(req.file.size / 1024)}KB` +
+        ` | 글자조각=${fields.length} | 제품명=${parsed.productName ?? '-'} | 기준량=${JSON.stringify(parsed.basis ?? null)}` +
+        ` | 영양성분 ${found}/9 | 원재료 ${parsed.ingredients?.length ?? 0}개 | 경고=${JSON.stringify(parsed.warnings ?? [])}`,
+    );
+    console.log(`[OCR Label] 읽은 글자(앞부분): ${(parsed.rawText || '').slice(0, 400)}`);
+
+    res.json(parsed);
   } catch (err) {
     console.error('[OCR Label] 처리 실패:', err);
     res.status(500).json({ error: '라벨 OCR 처리 오류', message: err.message });

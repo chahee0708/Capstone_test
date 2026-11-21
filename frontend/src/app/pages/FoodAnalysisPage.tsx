@@ -49,6 +49,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
+import { prepareImageForOcr } from "../../components/prepareImageForOcr";
 import { Search, Camera, AlertCircle } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -275,7 +276,7 @@ export function FoodAnalysisPage() {
 
     try {
       const formData = new FormData();
-      formData.append("image", file);
+      formData.append("image", await prepareImageForOcr(file)); // 방향 바로잡고 크기 줄여서 (prepareImageForOcr)
       const response = await fetch(`${API_URL}/ocr/label`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},

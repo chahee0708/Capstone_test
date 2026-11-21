@@ -337,6 +337,8 @@ export function HomePage() {
               key={`${labelFile.name}-${labelFile.size}-${labelFile.lastModified}`}
               file={labelFile}
               onResult={(data) => {
+                // 긴 확인 칸이 결과로 바뀌면 화면이 중간에 머물러서, 결과 맨 위(판정 카드)로 올린다
+                scrollOnResultRef.current = true;
                 setResult(data);
                 setLabelFile(null);
               }}

@@ -279,3 +279,33 @@ test("글자가 없어도 죽지 않는다", () => {
   assert.deepStrictEqual(r.ingredients, []);
   assert.strictEqual(r.rawText, "");
 });
+
+// ── [추가] 표 모양 라벨 (연세우유 솔티카라멜생크림빵, 휴대폰 사진의 실제 CLOVA 응답) ──────────
+//   - 기준량이 "총 내용량당" 으로만 쓰이고 양은 "총 내용량 150g" 줄에 따로 있다
+//   - 영양성분 이름 칸과 값 칸이 서로 다른 줄로 나뉜다 ("나트륨" | "310 mg" | "16%")
+//   - 혼입 문구에서 이름이 줄 끝에서 잘린다 ("…복숭아, 토" / "마토, …", "…있는 메" / "밀, …")
+const tableFields = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "ocr_samples", "table_label_fields.json"), "utf8"),
+);
+
+test("표 모양 라벨: '총 내용량당' 기준량을 '총 내용량 150g' 에서 가져온다", () => {
+  const r = parseLabel(tableFields);
+  assert.deepStrictEqual({ amount: r.basis.amount, unit: r.basis.unit }, { amount: 150, unit: "g" });
+});
+
+test("표 모양 라벨: 이름 칸과 값 칸이 나뉘어도 같은 높이의 '숫자+단위' 칸을 읽는다", () => {
+  const r = parseLabel(tableFields);
+  assert.deepStrictEqual(r.nutritionRaw, {
+    calories: 468, sodium: 310, carbohydrate: 65, sugar: 27, fat: 20,
+    transFat: 0.06, saturatedFat: 14, cholesterol: 30, protein: 7,
+  });
+  assert.strictEqual(r.nutritionPer100g.calories, 312);
+});
+
+test("표 모양 라벨: 줄 끝에서 잘린 혼입 이름을 잇는다 (토마토, 메밀)", () => {
+  const r = parseLabel(tableFields);
+  assert.ok(r.mayContain.includes("토마토"), r.mayContain.join(","));
+  assert.ok(r.mayContain.includes("메밀"), r.mayContain.join(","));
+  assert.ok(!r.mayContain.includes("마토"));
+  assert.deepStrictEqual(r.warnings, []);
+});
