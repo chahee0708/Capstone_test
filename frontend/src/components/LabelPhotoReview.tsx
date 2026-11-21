@@ -45,6 +45,7 @@ type LabelForm = {
   warnings: string[];
   // [추가] 라벨의 기준량 (예: { amount: 150, unit: "g", text: "총 내용량(150 g)당" }). 결과 화면 기본 "1개" 양으로 쓴다
   basis: { amount: number; unit: string; text: string } | null;
+  foodType: string | null; // [추가] 라벨의 식품유형 (예: "빵류") → 백엔드가 카테고리를 정한다
 };
 
 type Props = {
@@ -91,6 +92,7 @@ export function LabelPhotoReview({ file, onResult }: Props) {
           mayContain: data.mayContain ?? [],
           warnings: data.warnings ?? [],
           basis: data.basis ?? null,
+          foodType: data.foodType ?? null,
         });
       } catch {
         if (!cancelled) setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
@@ -134,6 +136,7 @@ export function LabelPhotoReview({ file, onResult }: Props) {
           ocrWarnings: form.warnings,
           ingredients: form.ingredients,
           basis: form.basis, // [추가] 결과 화면의 기본 기준량(1개)으로
+          foodType: form.foodType, // [추가] 카테고리용
         }),
       });
       const data = await response.json();

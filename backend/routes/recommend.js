@@ -73,6 +73,9 @@ const {
   getPersonalDailyValues,
 } = require("../services/scoreService");
 const { matchLabelAllergens } = require("../services/labelAllergyService");
+const { labelCategory } = require("../services/labelCategory");
+const { findAllergensInIngredients } = require("../services/ingredientAllergenService"); // [추가] 원재료 → 알레르기 // [추가] 사진 결과의 중분류
+const { mergeBrokenIngredients } = require("../services/labelParser"); // [추가] 잘못 나뉜 원재료 다시 합치기
 const { checkAllergens, hasAllergenInfo, getFoodAllergens } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
 const { getFoodIngredients } = require("../services/foodService");
@@ -160,10 +163,24 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "음식을 찾을 수 없습니다." });
     }
 
+    // [변경] 원재료·알레르기 성분 조회를 알레르기 체크 앞으로 (원재료에서 찾은 성분도 체크에 쓴다)
+    const { ingredients, unit, category, serving } = await getFoodIngredients(session, foodName);
+    // 음식에 든 알레르기 유발성분 전체 (원재료 아래 표시용)
+    const dbAllergens = await getFoodAllergens(session, foodName);
+    // [추가] DB 에 알레르기 정보가 없으면 원재료 이름에서 찾는다 (대부분의 음식이 여기에 해당)
+    const ingredientAllergens = dbAllergens.length > 0 ? [] : findAllergensInIngredients(ingredients);
+    const foodAllergens = dbAllergens.length > 0 ? dbAllergens : ingredientAllergens;
+
     // ── Step 5. 알레르기 체크 ──────────────────────────────────
+    // [변경] DB 관계로 찾은 것 + 원재료 이름에서 찾은 것 (사용자 알레르기 그룹도 같은 규칙으로 비교)
     const foundAllergens =
       allergens.length > 0
-        ? await checkAllergens(session, foodName, allergens)
+        ? [
+            ...new Set([
+              ...(await checkAllergens(session, foodName, allergens)),
+              ...matchLabelAllergens(ingredientAllergens, allergens),
+            ]),
+          ]
         : [];
 
     // ── Step 5-1. 최종 판정 ───────────────────────────────────
@@ -215,10 +232,6 @@ router.post("/", async (req, res) => {
     // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
     const dailyReference = getDisplayDailyReference(user.gender, user.age);
 
-    // [추가] 분석 화면 상단용 원재료 목록 + 기준 단위(100g / 100ml)
-    const { ingredients, unit, category, serving } = await getFoodIngredients(session, foodName);
-    // [추가] 음식에 든 알레르기 유발성분 전체 (원재료 아래 표시용)
-    const foodAllergens = await getFoodAllergens(session, foodName);
 
     // [추가] 최근 검색 기록 (프로필 "내 식품" 탭). 토큰의 사용자로 남긴다.
     //        기록이 실패해도 분석 응답은 그대로 보낸다 (기다리지 않음)
@@ -236,6 +249,8 @@ router.post("/", async (req, res) => {
       category, // [추가] 통합 중분류 (예: "아이스크림"). 없으면 null
       serving, // [추가] { pieceAmount, pieceLabel, totalAmount } 또는 null
       foodAllergens, // [추가] 음식에 든 알레르기 성분 전체 (예: ["우유", "대두"]). 정보 없으면 []
+      // [추가] foodAllergens 를 어디서 찾았나: "db" (알레르기 정보) | "ingredients" (원재료 이름) | null (없음)
+      foodAllergensSource: dbAllergens.length > 0 ? "db" : ingredientAllergens.length > 0 ? "ingredients" : null,
       // [추가] 영양정보 표 % 용 개인별 1일 기준치 { energy, values: { calories, sodium, ... } }
       dailyValues: getPersonalDailyValues(user.gender, user.age),
       userType: hasDiseases ? "disease" : "healthy",
@@ -288,7 +303,8 @@ function labelServing(basis) {
 // ── POST /recommend/label ────────────────────────────────────
 // OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
 router.post("/label", async (req, res) => {
-  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, ingredients, basis } = req.body;
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, ingredients, basis, foodType } =
+    req.body;
 
   if (!userId || !productName) {
     return res.status(400).json({ message: "userId와 productName은 필수입니다." });
@@ -339,7 +355,12 @@ router.post("/label", async (req, res) => {
 
     const labelAllergens = Array.isArray(allergenText) ? allergenText : [];
     const labelMayContain = Array.isArray(mayContain) ? mayContain : [];
-    const foundAllergens = matchLabelAllergens(labelAllergens, allergens);
+    // [추가] 라벨의 "OO 함유" 문구를 못 읽었으면 원재료 이름에서 찾는다
+    const ingredientAllergens =
+      labelAllergens.length > 0
+        ? []
+        : findAllergensInIngredients(Array.isArray(ingredients) ? mergeBrokenIngredients(ingredients.map(String)) : []);
+    const foundAllergens = matchLabelAllergens([...labelAllergens, ...ingredientAllergens], allergens);
 
     // OCR 경고가 있거나 함유 문구가 없으면 "알레르기 없음" 으로 단정할 수 없다
     const allergyCheckIncomplete =
@@ -349,17 +370,21 @@ router.post("/label", async (req, res) => {
     //        사용자 건강 정보는 넣지 않는다 → 다시 분석할 때 그때의 프로필로 판정된다
     const labelInput = {
       productName,
+      foodType: typeof foodType === "string" && foodType.trim() ? foodType.trim() : null, // [추가] 라벨의 식품유형
       nutritionPer100g: nutrition,
       allergenText: labelAllergens,
       mayContain: labelMayContain,
       ocrWarnings: Array.isArray(ocrWarnings) ? ocrWarnings : [],
-      ingredients: Array.isArray(ingredients) ? ingredients.map(String) : [],
+      // [변경] 예전에 [ ] 안 쉼표에서 잘못 나뉘어 저장된 원재료도 괄호가 닫힐 때까지 다시 합친다
+      ingredients: Array.isArray(ingredients) ? mergeBrokenIngredients(ingredients.map(String)) : [],
       basis: basis ?? null,
     };
+    // [추가] 식품유형 + 제품명 → 통합 중분류 (예: "빵류" → "간식빵"). 못 정하면 null
+    const category = labelCategory(labelInput.foodType, productName);
 
     // [추가] 최근 검색에 사진 결과도 남긴다 (출처 "label"). 실패해도 분석 응답은 그대로
     if (req.user?.id) {
-      recordRecentSearch(req.user.id, productName, null, "label", labelInput).catch((err) =>
+      recordRecentSearch(req.user.id, productName, category, "label", labelInput).catch((err) =>
         console.error("[최근 검색] 사진 결과 기록 실패:", err.message),
       );
     }
@@ -369,9 +394,12 @@ router.post("/label", async (req, res) => {
       source: "ocr",
       labelInput, // [추가] 관심 식품 저장·다시 분석용
       // [추가] 라벨에서 읽은 원재료 + 설명
-      ingredients: withInfo(Array.isArray(ingredients) ? ingredients.map(String) : []),
+      ingredients: withInfo(labelInput.ingredients),
+      category, // [추가] 통합 중분류 (식품유형에서). 결과 화면 그림·관심 식품 분류
       serving: labelServing(basis), // [변경] 라벨 기준량(예: 총 내용량 150g)을 결과 화면 기본 "1개" 양으로
-      foodAllergens: labelAllergens, // [추가] 라벨의 "OO 함유" 문구에서 읽은 성분
+      // [변경] 라벨의 "OO 함유" 문구에서 읽은 성분. 없으면 원재료 이름에서 찾은 성분
+      foodAllergens: labelAllergens.length > 0 ? labelAllergens : ingredientAllergens,
+      foodAllergensSource: labelAllergens.length > 0 ? "label" : ingredientAllergens.length > 0 ? "ingredients" : null,
       dailyValues: getPersonalDailyValues(user.gender, user.age), // [추가] 영양정보 표 % 용
       unit: basis?.unit === "ml" ? "ml" : "g", // [변경] 라벨 기준량 단위 (없으면 g)
       userType: hasDiseases ? "disease" : "healthy",

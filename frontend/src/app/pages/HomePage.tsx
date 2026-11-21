@@ -410,6 +410,7 @@ export function HomePage() {
                 category={result.category}
                 serving={result.serving}
                 allergens={result.foodAllergens ?? []}
+                allergensSource={result.foodAllergensSource}
                 myAllergens={result.allergens ?? result.allergenAlert ?? []}
                 dailyValues={result.dailyValues}
                 reasons={result.reasons ?? []}

@@ -43,6 +43,17 @@ export type IngredientInfo = {
   category: string | null;
   description: string | null;
   source: string | null;
+  // [추가] 복합원재료 조각 (예: "식물성크림[팜핵경화유(인도네시아산), 물엿]").
+  //        이름 전체로 설명을 못 찾았을 때만 온다. text 를 이어 붙이면 원래 이름과 같다
+  parts?: IngredientPart[];
+};
+
+/** 원재료 조각: 설명이 있으면 name(설명표 이름, 예: "밀가루1" → "밀가루")·category·description 도 있다 */
+export type IngredientPart = {
+  text: string;
+  name?: string;
+  category?: string | null;
+  description?: string | null;
 };
 
 export type ServingInfo = {
@@ -77,6 +88,8 @@ type Props = {
   serving?: ServingInfo | null;
   // 음식에 든 알레르기 성분 전체 (예: ["우유", "대두"])
   allergens: string[];
+  // [추가] allergens 를 어디서 찾았나. "ingredients" 면 원재료 이름에서 찾은 것 → 작게 표시
+  allergensSource?: "db" | "label" | "ingredients" | null;
   // 그중 사용자 알레르기에 걸린 것 (응답의 allergens. 예: ["우유", "갑각류(새우)"])
   myAllergens: string[];
   // 개인별 1일 기준치 (% 계산용). 없으면 % 칸이 비어 보인다
@@ -106,7 +119,7 @@ function isMyAllergen(name: string, myAllergens: string[]) {
 }
 
 export function NutritionFactsCard({
-  productName, nutrition, ingredients, unit, category, serving, allergens, myAllergens,
+  productName, nutrition, ingredients, unit, category, serving, allergens, allergensSource, myAllergens,
   dailyValues, reasons, verdictCard, headerAction,
 }: Props) {
   const { user } = useAuth(); // 표 아래 "○○님의 ..." 문구용
@@ -284,7 +297,24 @@ export function NutritionFactsCard({
             <p className="text-sm leading-7 text-gray-800 break-keep px-3 py-2">
               {ingredients.map((ing, i) => (
                 <span key={`${ing.name}-${i}`}>
-                  {ing.description ? <IngredientWithInfo info={ing} /> : ing.name}
+                  {ing.description ? (
+                    <IngredientWithInfo label={ing.name} info={ing} />
+                  ) : ing.parts ? (
+                    // [추가] 괄호가 긴 복합원재료: 조각마다 설명 (설명 없는 조각은 그냥 글자)
+                    ing.parts.map((p, j) =>
+                      p.description ? (
+                        <IngredientWithInfo
+                          key={j}
+                          label={p.text}
+                          info={{ name: p.name ?? p.text, category: p.category ?? null, description: p.description }}
+                        />
+                      ) : (
+                        <span key={j}>{p.text}</span>
+                      ),
+                    )
+                  ) : (
+                    ing.name
+                  )}
                   {i < ingredients.length - 1 && ", "}
                 </span>
               ))}
@@ -296,7 +326,10 @@ export function NutritionFactsCard({
           <p className="bg-gray-900 text-white text-sm leading-relaxed px-3 py-2">
             <span className="font-bold mr-2">알레르기 유발성분</span>
             {allergens.length === 0 ? (
-              <span className="text-gray-300">정보 없음 (포장의 표시를 확인하세요)</span>
+              <span className="text-gray-300">
+                {/* [변경] 원재료가 있으면 원재료 이름까지 찾아본 것 */}
+                {ingredients.length > 0 ? "원재료에서 찾은 성분 없음" : "정보 없음"} (포장의 표시를 확인하세요)
+              </span>
             ) : (
               allergens.map((name, i) => {
                 const mine = isMyAllergen(name, myAllergens);
@@ -311,6 +344,12 @@ export function NutritionFactsCard({
                 );
               })
             )}
+            {/* [추가] 알레르기 정보 대신 원재료 이름에서 찾은 경우 */}
+            {allergens.length > 0 && allergensSource === "ingredients" && (
+              <span className="block text-xs text-gray-300 mt-0.5">
+                원재료명에서 찾은 성분이에요. 포장의 알레르기 표시도 확인하세요.
+              </span>
+            )}
           </p>
         </div>
       </div>
@@ -319,7 +358,13 @@ export function NutritionFactsCard({
 }
 
 /** 설명이 있는 원재료: 마우스를 올리면 열리고, 누르면 열고 닫는다 (휴대폰용) */
-function IngredientWithInfo({ info }: { info: IngredientInfo }) {
+function IngredientWithInfo({
+  label,
+  info,
+}: {
+  label: string; // 원재료 칸에 보이는 글자 (예: "밀가루1")
+  info: { name: string; category: string | null; description: string | null }; // 말풍선 (예: "밀가루")
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -333,7 +378,7 @@ function IngredientWithInfo({ info }: { info: IngredientInfo }) {
           onPointerEnter={(e) => e.pointerType === "mouse" && setOpen(true)}
           onPointerLeave={(e) => e.pointerType === "mouse" && setOpen(false)}
         >
-          {info.name}
+          {label}
         </button>
       </PopoverTrigger>
       <PopoverContent

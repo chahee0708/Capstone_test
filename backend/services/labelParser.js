@@ -256,14 +256,18 @@ function toNutritionPer100g(nutritionRaw, basis) {
   return result;
 }
 
+// [변경] 괄호는 ( ) 뿐 아니라 [ ] { } 도 본다 ("식물성크림[팜핵경화유(인도네시아산), 물엿]" 이 한 원재료)
+const OPEN_BRACKETS = "([{";
+const CLOSE_BRACKETS = ")]}";
+
 /** 괄호 안의 쉼표는 나누지 않고 쉼표로 나눈다 */
 function splitTopLevel(text) {
   const items = [];
   let depth = 0;
   let current = "";
   for (const ch of text) {
-    if (ch === "(") depth += 1;
-    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (OPEN_BRACKETS.includes(ch)) depth += 1;
+    if (CLOSE_BRACKETS.includes(ch)) depth = Math.max(0, depth - 1);
     if ((ch === "," || ch === "，" || ch === "、") && depth === 0) {
       items.push(current);
       current = "";
@@ -500,4 +504,30 @@ function parseLabel(fields) {
   };
 }
 
-module.exports = { parseLabel, toPer100 };
+/**
+ * [추가] 이미 잘못 나뉜 원재료 목록을 괄호가 닫힐 때까지 다시 합친다
+ *   예전 버전은 [ ] 안의 쉼표에서도 나눴다 → 저장해 둔 사진 결과를 다시 분석할 때 고쳐서 쓴다
+ *   ["식물성크림[팜핵경화유", "물엿]", "설탕"] → ["식물성크림[팜핵경화유, 물엿]", "설탕"]
+ */
+function mergeBrokenIngredients(items) {
+  const result = [];
+  let current = null;
+  let depth = 0;
+  for (const raw of items) {
+    const item = String(raw).trim();
+    if (!item) continue;
+    current = current === null ? item : `${current}, ${item}`;
+    for (const ch of item) {
+      if (OPEN_BRACKETS.includes(ch)) depth += 1;
+      if (CLOSE_BRACKETS.includes(ch)) depth = Math.max(0, depth - 1);
+    }
+    if (depth === 0) {
+      result.push(current);
+      current = null;
+    }
+  }
+  if (current !== null) result.push(current); // 끝까지 안 닫혔으면 그대로
+  return result;
+}
+
+module.exports = { parseLabel, toPer100, mergeBrokenIngredients };

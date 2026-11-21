@@ -63,16 +63,82 @@ try {
   console.error("[원재료 설명] CSV 읽기 실패:", err.message);
 }
 
-/** 원재료 이름 배열 → [{ name, category, description, source }] (설명이 없으면 null) */
+/**
+ * [추가] 이름 하나로 설명 찾기. 라벨 표기 그대로는 없는 경우가 많아 조금씩 다듬어 본다
+ *   "밀가루1" → "밀가루" (같은 원재료가 여러 번이면 번호를 붙인다), "설탕 10%" → "설탕"
+ *   찾으면 { name: 설명표의 이름, category, description, source }
+ */
+function lookup(raw) {
+  const text = raw.trim();
+  if (!text) return null;
+  const tries = [
+    text,
+    text.replace(/\s*\d+(?:\.\d+)?\s*%$/, ""), // 함량 "10%"
+    text.replace(/\s*\d+$/, ""), // 번호 "밀가루1"
+    text.replace(/\s+/g, ""), // 띄어쓰기 "D- 소비톨액"
+  ];
+  for (const t of tries) {
+    const info = t && infoByName.get(t);
+    if (info) return { name: t, ...info };
+  }
+  return null;
+}
+
+// 괄호·쉼표·콜론·빗금: 복합원재료의 하위 원재료와 원산지를 나누는 글자
+const SEPARATORS = /([[\](){}<>,，、:：/])/;
+
+/**
+ * [추가] 복합원재료를 조각으로 나눠 조각마다 설명을 찾는다 (원래 글자는 그대로 이어 붙이면 같다)
+ *   "식물성크림[팜핵경화유(인도네시아산), 물엿]" →
+ *   [{text:"식물성크림", name, description...}, {text:"["}, {text:"팜핵경화유", ...}, {text:"("},
+ *    {text:"인도네시아산"}, {text:"), "}, {text:"물엿", ...}, {text:"]"}]
+ *   설명이 없는 조각은 { text } 만 (화면에서 그냥 글자)
+ */
+function toParts(name) {
+  const parts = [];
+  const pushText = (text) => {
+    if (!text) return;
+    const last = parts[parts.length - 1];
+    if (last && !last.description) last.text += text; // 설명 없는 글자끼리는 합친다
+    else parts.push({ text });
+  };
+  for (const piece of name.split(SEPARATORS)) {
+    if (!piece) continue;
+    const core = piece.trim();
+    const found = SEPARATORS.test(piece) ? null : lookup(core);
+    // 괄호 안의 원산지("인도네시아산")는 설명표에 "표기 변형"으로 있지만, 조각에서는 그냥 글자로 둔다
+    const info = found && found.category !== "표기 변형" ? found : null;
+    if (!info) {
+      pushText(piece);
+      continue;
+    }
+    const lead = piece.slice(0, piece.indexOf(core));
+    pushText(lead);
+    parts.push({ text: core, name: info.name, category: info.category, description: info.description });
+    pushText(piece.slice(lead.length + core.length));
+  }
+  return parts;
+}
+
+/**
+ * 원재료 이름 배열 → [{ name, category, description, source, parts? }] (설명이 없으면 null)
+ *   [추가] 이름 전체로 못 찾으면 괄호 안까지 나눠서 찾은 조각을 parts 로 준다
+ *          (조각 중 하나라도 설명이 있을 때만. 화면은 parts 가 있으면 조각마다 말풍선)
+ */
 function withInfo(names) {
   return names.map((name) => {
-    const info = infoByName.get(name.trim());
-    return {
+    const info = lookup(name);
+    const item = {
       name,
       category: info?.category ?? null,
       description: info?.description ?? null,
       source: info?.source ?? null,
     };
+    if (!info) {
+      const parts = toParts(name);
+      if (parts.some((p) => p.description)) item.parts = parts;
+    }
+    return item;
   });
 }
 

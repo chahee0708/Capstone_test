@@ -10,6 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || "/api";
 // [추가] 사진으로 읽은 라벨을 다시 분석할 값 (POST /recommend/label 요청 본문에서 userId 만 뺀 것)
 export type LabelInput = {
   productName: string;
+  foodType?: string | null; // [추가] 라벨의 식품유형 (예전에 저장한 값에는 없다)
   nutritionPer100g: Record<string, number | null>;
   allergenText: string[];
   mayContain: string[];

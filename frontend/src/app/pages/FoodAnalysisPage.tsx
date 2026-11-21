@@ -101,6 +101,8 @@ export type AnalysisResult = {
   serving?: ServingInfo | null;
   // [추가] 음식에 든 알레르기 성분 전체 (사용자와 무관). 정보 없으면 []
   foodAllergens?: string[];
+  // [추가] foodAllergens 출처: "db" | "label" | "ingredients"(원재료 이름에서 찾음) | null
+  foodAllergensSource?: "db" | "label" | "ingredients" | null;
   // [추가] 영양정보 표 % 용 개인별 1일 기준치 (성별·나이 KDRI)
   dailyValues?: DailyValues | null;
   // [추가] 사진(라벨) 결과면 "ocr" + 다시 분석할 값 (관심 식품·최근 검색에 저장)
@@ -165,6 +167,7 @@ type LabelForm = {
   allergenText: string[];
   mayContain: string[];
   warnings: string[];
+  foodType: string | null; // [추가] 라벨의 식품유형 → 카테고리
 };
 
 export function FoodAnalysisPage() {
@@ -305,6 +308,7 @@ export function FoodAnalysisPage() {
         allergenText: data.allergenText ?? [],
         mayContain: data.mayContain ?? [],
         warnings: data.warnings ?? [],
+        foodType: data.foodType ?? null,
       });
     } catch {
       setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
@@ -344,6 +348,7 @@ export function FoodAnalysisPage() {
           mayContain: labelForm.mayContain,
           ocrWarnings: labelForm.warnings,
           ingredients: labelForm.ingredients,
+          foodType: labelForm.foodType,
         }),
       });
       const data = await response.json();
@@ -568,6 +573,7 @@ export function FoodAnalysisPage() {
               category={analysisResult.category}
               serving={analysisResult.serving}
               allergens={analysisResult.foodAllergens ?? []}
+                allergensSource={analysisResult.foodAllergensSource}
               myAllergens={analysisResult.allergens ?? analysisResult.allergenAlert ?? []}
               dailyValues={analysisResult.dailyValues}
               reasons={analysisResult.reasons ?? []}
