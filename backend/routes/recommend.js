@@ -17,7 +17,15 @@
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(fix/ocr-improve) ───────────────────────────────
+ * ── 이번 변경(seohee 브랜치 기능 이식) ─────────────────────────
+ *   - [추가] 두 응답 모두 ingredients(원재료 + 설명, ingredientInfoService.withInfo) 와
+ *       category(통합 중분류 → 프론트 카테고리 그림) 를 보낸다
+ *       POST /recommend: Food.unified_mid / POST /recommend/label: 식품유형 + 제품명 (labelCategory)
+ *   - [추가] 분석이 성공하면 최근 검색에 남긴다 (routes/myFoods.recordRecentSearch, 토큰의 사용자 기준)
+ *       사진 결과는 다시 분석할 값(labelInput)을 같이 저장하고 응답에도 labelInput 을 보낸다 (관심 식품 저장용)
+ *   - [변경] /label 원재료는 labelParser.mergeBrokenIngredients 로 잘못 나뉜 조각을 다시 합친 뒤 쓴다
+ *
+ * ── 이전 변경(fix/ocr-improve) ───────────────────────────────
  *   - [변경] POST /recommend/label 의 allergyCheckIncomplete 조건을 알레르기 관련만으로 정리
  *       함유 문구 없음, 목록에 없는 이름(잘못 읽은 글자)만 미완료. 기준량·식품유형 경고는 제외
  *       (labelAllergyService.isAllergyCheckIncomplete)
@@ -85,6 +93,11 @@ const {
 } = require("../services/labelAllergyService");
 const { checkAllergens, hasAllergenInfo } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
+const { getFoodIngredients } = require("../services/foodService"); // [추가] 원재료 + 통합 중분류
+const { withInfo } = require("../services/ingredientInfoService"); // [추가] 원재료 설명
+const { labelCategory } = require("../services/labelCategory"); // [추가] 사진 결과의 중분류
+const { mergeBrokenIngredients } = require("../services/labelParser"); // [추가] 잘못 나뉜 원재료 다시 합치기
+const { recordRecentSearch } = require("./myFoods"); // [추가] 최근 검색 기록
 
 router.post("/", async (req, res) => {
   const { foodName, userId } = req.body;
@@ -222,9 +235,22 @@ router.post("/", async (req, res) => {
     // 탄수화물만 "권장섭취량 130g" 대신 "에너지적정비율 상한(65%)" 값이 들어온다
     const dailyReference = getDisplayDailyReference(user.gender, user.age);
 
+    // [추가] 원재료(order 순) + 통합 중분류 (화면의 원재료 설명·카테고리 그림용)
+    const { ingredients, category } = await getFoodIngredients(session, foodName);
+
+    // [추가] 최근 검색 기록 (프로필 "내 식품" 탭). 토큰의 사용자로 남긴다.
+    //        기록이 실패해도 분석 응답은 그대로 보낸다 (기다리지 않음)
+    if (req.user?.id) {
+      recordRecentSearch(req.user.id, foodName, category).catch((err) =>
+        console.error("[최근 검색] 기록 실패:", err.message),
+      );
+    }
+
     // ── Step 7. 최종 응답 ──────────────────────────────────────
     res.json({
       productName: foodName,
+      ingredients: withInfo(ingredients), // [추가] [{ name, category, description, source, parts? }] (없으면 [])
+      category, // [추가] 통합 중분류 (예: "아이스크림"). 없으면 null
       userType: hasDiseases ? "disease" : "healthy",
       diseaseTrack: result.diseaseTrack, // "diabetes" | "rule" | "healthy"
       verdict: nutritionVerdict, // "추천" | "주의" | "비추천" (알레르기와 무관한 영양 판정)
@@ -261,8 +287,13 @@ const LABEL_NUTRITION_KEYS = [
 // ── POST /recommend/label ────────────────────────────────────
 // OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
 router.post("/label", async (req, res) => {
-  // ocrWarnings 는 예전 요청 형식 호환용으로만 받는다 (미완료 조건에 쓰지 않음)
-  const { userId, productName, nutritionPer100g, allergenText, mayContain, ingredients } = req.body;
+  // ocrWarnings 는 미완료 조건에 쓰지 않는다 (다시 분석할 값 labelInput 에 저장만)
+  // [추가] basis, foodType: 다시 분석할 값 저장 / 통합 중분류 계산용
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings, basis, foodType } = req.body;
+  // [변경] [ ] 안 쉼표에서 잘못 나뉜 원재료는 괄호가 닫힐 때까지 다시 합친다
+  const ingredients = Array.isArray(req.body.ingredients)
+    ? mergeBrokenIngredients(req.body.ingredients.map(String))
+    : [];
 
   if (!userId || !productName) {
     return res.status(400).json({ message: "userId와 productName은 필수입니다." });
@@ -314,10 +345,7 @@ router.post("/label", async (req, res) => {
     const labelAllergens = Array.isArray(allergenText) ? allergenText : [];
     const labelMayContain = Array.isArray(mayContain) ? mayContain : [];
     // 함유 문구에서 걸린 것 + 원재료 키워드로 걸린 것 (중복 제거). 판정 등급은 바꾸지 않는다
-    const ingredientAllergens = findIngredientAllergens(
-      Array.isArray(ingredients) ? ingredients : [],
-      allergens,
-    );
+    const ingredientAllergens = findIngredientAllergens(ingredients, allergens);
     const foundAllergens = [
       ...new Set([
         ...matchLabelAllergens(labelAllergens, allergens),
@@ -329,9 +357,34 @@ router.post("/label", async (req, res) => {
     // [변경] ocrWarnings(기준량·식품유형 등)는 더 이상 조건에 쓰지 않는다 (입력 형식 유지용으로만 받음)
     const allergyCheckIncomplete = isAllergyCheckIncomplete(labelAllergens, labelMayContain);
 
+    // [추가] 이 사진 분석을 나중에 그대로 다시 할 수 있는 값 (프로필 "내 식품" 에서 누르면 이 값으로 다시 분석)
+    //        사용자 건강 정보는 넣지 않는다 → 다시 분석할 때 그때의 프로필로 판정된다
+    const labelInput = {
+      productName,
+      foodType: typeof foodType === "string" && foodType.trim() ? foodType.trim() : null,
+      nutritionPer100g: nutrition,
+      allergenText: labelAllergens,
+      mayContain: labelMayContain,
+      ocrWarnings: Array.isArray(ocrWarnings) ? ocrWarnings : [],
+      ingredients,
+      basis: basis ?? null,
+    };
+    // [추가] 식품유형 + 제품명 → 통합 중분류 (예: "빵류" → "간식빵"). 못 정하면 null
+    const category = labelCategory(labelInput.foodType, productName);
+
+    // [추가] 최근 검색에 사진 결과도 남긴다 (출처 "label"). 실패해도 분석 응답은 그대로
+    if (req.user?.id) {
+      recordRecentSearch(req.user.id, productName, category, "label", labelInput).catch((err) =>
+        console.error("[최근 검색] 사진 결과 기록 실패:", err.message),
+      );
+    }
+
     res.json({
       productName,
       source: "ocr",
+      labelInput, // [추가] 관심 식품 저장·다시 분석용
+      ingredients: withInfo(ingredients), // [추가] 라벨에서 읽은 원재료 + 설명
+      category, // [추가] 통합 중분류 (식품유형에서). 카테고리 그림·내 식품 분류
       userType: hasDiseases ? "disease" : "healthy",
       diseaseTrack: result.diseaseTrack,
       verdict: result.verdict,

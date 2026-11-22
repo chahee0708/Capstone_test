@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate, Link } from "react-router";
-import { Heart, Mail, Lock, User } from "lucide-react";
+import { Heart } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { useAuth } from "../../contexts/AuthContext";
+import { FloatingField } from "../../components/FloatingField";
 
 type SignupFormValues = {
   name: string;
@@ -53,85 +52,73 @@ export function SignupPage() {
         <Card className="p-8">
           <h2 className="text-xl font-semibold mb-6">회원가입</h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {/* [변경] 입력칸: 밑줄 + 떠오르는 이름표 (FloatingField, seohee 브랜치 형식) */}
             <div>
-              <Label htmlFor="name">이름</Label>
-              <div className="relative mt-1">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="이름을 입력하세요"
-                  className="pl-9"
-                  {...register("name", {
-                    required: "이름을 입력해주세요",
-                    minLength: { value: 2, message: "이름은 2자 이상이어야 합니다" },
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="name"
+                label="이름"
+                autoComplete="name"
+                invalid={!!errors.name}
+                registration={register("name", {
+                  required: "이름을 입력해주세요",
+                  minLength: { value: 2, message: "이름은 2자 이상이어야 합니다" },
+                })}
+              />
               {errors.name && (
                 <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>
               )}
             </div>
 
             <div>
-              <Label htmlFor="email">이메일</Label>
-              <div className="relative mt-1">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="example@email.com"
-                  className="pl-9"
-                  {...register("email", {
-                    required: "이메일을 입력해주세요",
-                    pattern: {
-                      value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                      message: "올바른 이메일 형식이 아닙니다",
-                    },
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="email"
+                label="이메일"
+                type="email"
+                autoComplete="email"
+                invalid={!!errors.email}
+                registration={register("email", {
+                  required: "이메일을 입력해주세요",
+                  pattern: {
+                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                    message: "올바른 이메일 형식이 아닙니다",
+                  },
+                })}
+              />
               {errors.email && (
                 <p className="text-red-500 text-xs mt-1">{errors.email.message}</p>
               )}
             </div>
 
             <div>
-              <Label htmlFor="password">비밀번호</Label>
-              <div className="relative mt-1">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="8자 이상 입력하세요"
-                  className="pl-9"
-                  {...register("password", {
-                    required: "비밀번호를 입력해주세요",
-                    minLength: { value: 8, message: "비밀번호는 8자 이상이어야 합니다" },
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="password"
+                label="비밀번호 (8자 이상)"
+                type="password"
+                autoComplete="new-password"
+                invalid={!!errors.password}
+                registration={register("password", {
+                  required: "비밀번호를 입력해주세요",
+                  minLength: { value: 8, message: "비밀번호는 8자 이상이어야 합니다" },
+                })}
+              />
               {errors.password && (
                 <p className="text-red-500 text-xs mt-1">{errors.password.message}</p>
               )}
             </div>
 
             <div>
-              <Label htmlFor="confirmPassword">비밀번호 확인</Label>
-              <div className="relative mt-1">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  placeholder="비밀번호를 다시 입력하세요"
-                  className="pl-9"
-                  {...register("confirmPassword", {
-                    required: "비밀번호 확인을 입력해주세요",
-                    validate: (value) =>
-                      value === password || "비밀번호가 일치하지 않습니다",
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="confirmPassword"
+                label="비밀번호 확인"
+                type="password"
+                autoComplete="new-password"
+                invalid={!!errors.confirmPassword}
+                registration={register("confirmPassword", {
+                  required: "비밀번호 확인을 입력해주세요",
+                  validate: (value) =>
+                    value === password || "비밀번호가 일치하지 않습니다",
+                })}
+              />
               {errors.confirmPassword && (
                 <p className="text-red-500 text-xs mt-1">{errors.confirmPassword.message}</p>
               )}

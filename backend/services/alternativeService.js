@@ -6,8 +6,8 @@
  *
  * 처리 순서 (성능 때문에 이 순서를 지킨다):
  *   1. 원래 음식의 category_mid / 원재료 조회 → 없으면 [] (기존 3,000여 개 음식)
- *   2. 후보 조회 (Cypher 1번): 같은 중분류, alt_candidate = true, 원래 음식 제외, 원재료 1개 이상,
- *      사용자 알레르기(이름 또는 그룹)와 겹치는 음식 제외. 원재료는 order 순, 영양소 속성 함께
+ *   2. 후보 조회 (Cypher 1번): 같은 중분류, alt_candidate = true, 원래 음식 제외, 원재료 1개 이상.
+ *      원재료는 order 순, 영양소 속성 함께 (사용자 알레르기는 고려하지 않는다)
  *   3. 모든 후보 유사도 계산 → 기준 미만 제거 → 유사도 높은 순 정렬
  *   4. 위에서부터 사용자 기준으로 재판정 (원래 음식과 같은 판정 함수) → 등급 필터 통과 시 추가
  *      MAX_ALTERNATIVES 개 차면 즉시 중단. 유사도가 같으면(소수 둘째 자리) 등급이 좋은 쪽 먼저,
@@ -17,13 +17,15 @@
  * 등급 필터:
  *   - 후보 등급이 원래 verdict 보다 더 나은 것 (비추천 → 주의·추천 / 주의 → 추천)
  *
- * 이번 변경(알레르기는 경고로만 표시):
- *   - [삭제] allergyOverride 등급 필터 분기. verdict 가 알레르기로 바뀌지 않으므로 필요 없다
- *   - 사용자 알레르기와 겹치는 후보를 제외하는 조건은 그대로 유지
+ * 이번 변경(대체음식 추천에서 알레르기 미고려):
+ *   - [삭제] 사용자 알레르기(이름 또는 그룹)와 겹치는 후보 제외 조건
+ *   - [삭제] 사용자 알레르기가 있을 때 알레르기 정보가 없는 후보 제외 조건
+ *     (밀 알레르기 사용자는 만두처럼 후보 전부가 밀을 포함하는 경우 대체음식이 0개가 되던 문제)
  *
  * 결과 항목: { name, verdict, similarity, keyNutrient: { label, unit, before, after } | null, sharedIngredients }
  *
  * 이전 변경:
+ *   - [삭제] allergyOverride 등급 필터 분기. verdict 가 알레르기로 바뀌지 않으므로 필요 없다
  *   - [변경] 동점 정렬: 유사도(소수 둘째 자리)·등급이 같으면 이름 가나다순 → report_no 순
  *     (이전에는 원래 유사도 순이라, 완전히 같은 값이면 Neo4j 반환 순서에 따라 결과가 달라질 수 있었다)
  *   - [추가] 사용자 알레르기가 있으면 알레르기 정보(CONTAINS_ALLERGEN)가 하나도 없는 후보는 제외
@@ -72,12 +74,6 @@ const CANDIDATE_QUERY = `
   WHERE c.alt_candidate = true
     AND c.name <> $name
     AND (c.report_no IS NULL OR $reportNo IS NULL OR c.report_no <> $reportNo)
-    AND NOT EXISTS {
-      MATCH (c)-[:CONTAINS_ALLERGEN]->(a:Allergy)
-      WHERE a.name IN $allergens OR a.group IN $allergens
-    }
-    // [추가] 사용자 알레르기가 있으면 알레르기 정보가 없는 후보 제외 (안전한지 확인할 수 없음)
-    AND (size($allergens) = 0 OR EXISTS { (c)-[:CONTAINS_ALLERGEN]->(:Allergy) })
   MATCH (c)-[r:HAS_INGREDIENT]->(i:Ingredient)
   WITH c, r, i ORDER BY r.order
   WITH c, collect(i.name) AS ingredients
@@ -144,7 +140,6 @@ async function findAlternatives(session, originalFood, user, originalResult) {
     categoryMid,
     name: originalFood,
     reportNo: o.get("reportNo") ?? null,
-    allergens: user.allergens ?? [],
   });
 
   // ── 3a/3b. 유사도 계산 → 기준 미만 제거 → 높은 순 정렬 ──

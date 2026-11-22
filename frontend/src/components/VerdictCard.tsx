@@ -4,7 +4,11 @@
  * 역할: 분석 결과 맨 위의 "판정 카드". 제품명 + 큰 판정 글씨 + 판정 근거(VerdictExplanation)를 보여준다.
  *       2형 당뇨(ML 트랙) 사용자는 판정 아래에 GI 지수 한 줄이 추가된다.
  *
- * 이번 변경(알레르기는 경고로만 표시):
+ * 이번 변경(카테고리 그림 + 관심 식품 하트):
+ *   - [추가] categoryIcon: 통합 중분류 그림(categoryIcons.ts) 주소가 있으면 제품명 줄 오른쪽에 작게 표시
+ *   - [추가] headerAction: 제품명 줄 오른쪽 끝에 넣을 버튼 (FoodAnalysisPage 의 관심 식품 하트)
+ *
+ * 이전 변경(알레르기는 경고로만 표시):
  *   - 고정 영역 아래에 빨간 경고 상자 추가: "알레르기 경고: 등록하신 알레르기 성분이 들어 있어요."
  *   - 배지 문구 변경: 1~2개 "알레르기 경고 · 우유, 밀" / 3개 이상 "알레르기 경고 · 우유 외 2개"
  *   - 2페이지 제목 변경: "알레르기 유발 성분" → "알레르기 경고"
@@ -30,7 +34,7 @@
  *            제품이 바뀌면 1페이지부터 보이도록 페이지에서 key={productName} 으로 쓴다
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle, Info } from "lucide-react";
 import { Card } from "../app/components/ui/card";
 import {
@@ -79,6 +83,9 @@ type Props = {
   carbInfo: CarbInfo | null;
   allergens: string[]; // 걸린 알레르기 이름 (없으면 [])
   allergyUnknown?: boolean; // [추가] 알레르기 정보가 없어 확인이 필요한 제품
+  categoryIcon?: string | null; // [추가] 카테고리 그림 주소 (없으면 그림 칸 없음)
+  categoryName?: string | null; // [추가] 그림의 대체 글자 (통합 중분류 이름)
+  headerAction?: ReactNode; // [추가] 제품명 줄 오른쪽 끝 버튼 (관심 식품 하트)
 };
 
 export function VerdictCard({
@@ -89,6 +96,9 @@ export function VerdictCard({
   carbInfo,
   allergens,
   allergyUnknown = false,
+  categoryIcon = null,
+  categoryName = null,
+  headerAction,
 }: Props) {
   const style = VERDICT_STYLE[verdict] ?? VERDICT_STYLE["비추천"];
   const Icon = style.icon;
@@ -101,9 +111,20 @@ export function VerdictCard({
     <Card className={`p-6 border-2 ${style.card}`}>
       {/* ── 고정 영역: 아이콘 + 제품명 + 큰 판정 글씨 + 알레르기 배지 ── */}
       <div className="flex items-center gap-4">
-        <Icon className={`w-10 h-10 shrink-0 ${style.text}`} />
+        {/* [추가] 카테고리 그림이 있으면 판정 아이콘 대신 그림 + 작은 판정 아이콘 */}
+        {categoryIcon ? (
+          <div className="relative shrink-0">
+            <img src={categoryIcon} alt={categoryName ?? ""} className="w-14 h-14 object-contain" />
+            <Icon className={`absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full ${style.text}`} />
+          </div>
+        ) : (
+          <Icon className={`w-10 h-10 shrink-0 ${style.text}`} />
+        )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-500 mb-1">{productName}</p>
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm text-gray-500 min-w-0 truncate">{productName}</p>
+            {headerAction && <div className="ml-auto shrink-0">{headerAction}</div>}
+          </div>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <h2 className={`text-2xl font-bold ${style.text}`}>{verdict}</h2>
             {/* 알레르기 배지: 누르면 2페이지(알레르기 유발 성분)로 이동 */}

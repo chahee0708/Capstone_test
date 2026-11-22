@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate, Link } from "react-router";
-import { Heart, Mail, Lock } from "lucide-react";
+import { Heart } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
 import { Card } from "../components/ui/card";
 import { useAuth } from "../../contexts/AuthContext";
+import { FloatingField } from "../../components/FloatingField";
 
 type LoginFormValues = {
   email: string;
@@ -48,43 +47,38 @@ export function LoginPage() {
         <Card className="p-8">
           <h2 className="text-xl font-semibold mb-6">로그인</h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {/* [변경] 입력칸: 밑줄 + 떠오르는 이름표 (FloatingField, seohee 브랜치 형식) */}
             <div>
-              <Label htmlFor="email">이메일</Label>
-              <div className="relative mt-1">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="example@email.com"
-                  className="pl-9"
-                  {...register("email", {
-                    required: "이메일을 입력해주세요",
-                    pattern: {
-                      value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                      message: "올바른 이메일 형식이 아닙니다",
-                    },
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="email"
+                label="이메일"
+                type="email"
+                autoComplete="email"
+                invalid={!!errors.email}
+                registration={register("email", {
+                  required: "이메일을 입력해주세요",
+                  pattern: {
+                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                    message: "올바른 이메일 형식이 아닙니다",
+                  },
+                })}
+              />
               {errors.email && (
                 <p className="text-red-500 text-xs mt-1">{errors.email.message}</p>
               )}
             </div>
 
             <div>
-              <Label htmlFor="password">비밀번호</Label>
-              <div className="relative mt-1">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="비밀번호를 입력하세요"
-                  className="pl-9"
-                  {...register("password", {
-                    required: "비밀번호를 입력해주세요",
-                  })}
-                />
-              </div>
+              <FloatingField
+                id="password"
+                label="비밀번호"
+                type="password"
+                autoComplete="current-password"
+                invalid={!!errors.password}
+                registration={register("password", {
+                  required: "비밀번호를 입력해주세요",
+                })}
+              />
               {errors.password && (
                 <p className="text-red-500 text-xs mt-1">{errors.password.message}</p>
               )}

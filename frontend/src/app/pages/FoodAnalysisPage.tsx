@@ -13,7 +13,18 @@
  *      - 1페이지: 영양소 균형 (NutrientRadarChart)
  *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
  *
- * ── 이번 변경(OCR 확인 화면: 기준량 수정 + 100g당 재계산) ──────────
+ * ── 이번 변경(seohee 브랜치 기능 이식) ─────────────────────────
+ *   - [추가] 판정 카드에 카테고리 그림(응답 category → categoryIcons.ts)과 관심 식품 하트 버튼
+ *       하트: POST/DELETE /me/favorites. 사진 결과는 labelInput 을 같이 저장 → 프로필에서 다시 분석
+ *   - [추가] 원재료 카드 (IngredientsCard, 결과 맨 아래 식품 라벨 모양): 응답 ingredients 의 설명을 말풍선으로
+ *   - [추가] 프로필 "내 식품" 에서 들어오면 (location.state) 바로 분석
+ *       { query } → 식품명 검색 분석 / { label } → 저장된 라벨 값으로 POST /recommend/label
+ *   - [변경] OCR 사진은 보내기 전에 방향·크기 정리 (prepareImageForOcr)
+ *   - [변경] POST /recommend/label 에 원재료·기준량·식품유형도 보낸다 (원재료 설명, 카테고리, 다시 분석용)
+ *   - [변경] "이 값으로 분석하기" 가 성공하면 확인·수정 칸과 촬영 카드를 숨긴다 → 결과 화면만 보인다 (실패하면 칸 유지)
+ *       다른 사진을 분석하려면 검색 탭을 눌렀다가 OCR 탭으로 돌아오면 촬영 카드가 다시 보인다
+ *
+ * ── 이전 변경(OCR 확인 화면: 기준량 수정 + 100g당 재계산) ──────────
  *   - 영양성분 칸에 사진에 적힌 값(nutritionRaw)을 보여주고, 칸 아래에 100g당 값을 자동 계산해 표시
  *   - 기준량 칸(숫자 + g/ml) 추가. 기준량이나 원본값을 고치면 100g당 값이 바로 다시 계산된다
  *       계산: utils/per100.ts (백엔드 labelParser.js 의 toPer100 과 같은 식)
@@ -54,9 +65,10 @@
  *   - frontend/src/components/AlternativesSection.tsx
  *   - frontend/src/components/NutritionSlideCard.tsx (안에서 NutrientRadarChart, NutritionBreakdownList 사용)
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
-import { Search, Camera, AlertCircle } from "lucide-react";
+import { Search, Camera, AlertCircle, Heart } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card } from "../components/ui/card";
@@ -82,6 +94,16 @@ import {
   type Alternative,
 } from "../../components/AlternativesSection";
 import { NutritionSlideCard } from "../../components/NutritionSlideCard";
+import { IngredientsCard, type IngredientInfo } from "../../components/IngredientsCard";
+import { getCategoryIcon } from "../../components/categoryIcons";
+import { prepareImageForOcr } from "../../components/prepareImageForOcr";
+import {
+  fetchMyFoods,
+  addFavorite,
+  removeFavorite,
+  favoriteKey,
+  type LabelInput,
+} from "../../components/myFoodsApi";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";//백엔드 로컬호스트 값
 
@@ -91,6 +113,12 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";//백엔
  */
 type AnalysisResult = {
   productName: string;
+  // [추가] 원재료 + 설명 (없으면 []), 통합 중분류 (카테고리 그림용, 없으면 null)
+  ingredients?: IngredientInfo[];
+  category?: string | null;
+  // [추가] 사진 결과에만: 출처 "ocr" + 다시 분석할 값 (관심 식품 저장용)
+  source?: "ocr";
+  labelInput?: LabelInput;
   userType: string;
   diseaseTrack: "diabetes" | "rule" | "healthy";
   // 최종 판정 (영양 판정 그대로. 알레르기는 등급에 영향을 주지 않는다)
@@ -161,10 +189,13 @@ type LabelForm = {
   basisUnit: "g" | "ml";
   basisSource: "label" | "total" | "none"; // 기준량 출처: "~당" 문구 / 총 내용량 / 없음
   totalText: string; // 총 내용량 문구 (안내 문장용)
+  basisText: string; // [추가] 기준량 문구 (예: "1봉지(55 g)당"). 다시 분석용으로 저장
   raw: Record<string, string>; // 사진에 적힌 값 (기준량당)
   allergenText: string[];
   mayContain: string[];
   warnings: string[];
+  ingredients: string[]; // [추가] 라벨에서 읽은 원재료 (원재료 설명·알레르기 검사용)
+  foodType: string | null; // [추가] 라벨의 식품유형 (카테고리 그림용)
 };
 
 /** 문자열 칸 → 0 이상의 숫자. 비었거나 숫자가 아니면 null */
@@ -199,6 +230,33 @@ export function FoodAnalysisPage() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState("");
+
+  // ── [추가] 관심 식품: "db:이름" / "label:이름" 키 모음 (하트 채움 여부) ──
+  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!token) return;
+    fetchMyFoods(token)
+      .then((data) => setFavoriteKeys(new Set(data.favorites.map((f) => favoriteKey(f.source, f.name)))))
+      .catch(() => {}); // 목록을 못 불러와도 분석은 된다 (하트만 빈 채로)
+  }, [token]);
+
+  // ── [추가] 프로필 "내 식품" 에서 누르고 들어온 경우: 바로 분석 ──
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const state = location.state as { query?: string; label?: LabelInput } | null;
+    if (!state) return;
+    // 새로고침·뒤로가기로 다시 분석되지 않게 state 를 비운다
+    navigate(location.pathname, { replace: true, state: null });
+    if (state.label) {
+      setSearchQuery("");
+      runLabelAnalysis(state.label);
+    } else if (state.query) {
+      setSearchQuery(state.query);
+      handleAnalyze(state.query);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   // ── 자동완성: 입력한 글자가 들어간 제품명 후보 ──────────────
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -293,7 +351,8 @@ export function FoodAnalysisPage() {
 
     try {
       const formData = new FormData();
-      formData.append("image", file);
+      // [변경] 휴대폰 사진 방향을 바로잡고 크기를 줄여서 보낸다
+      formData.append("image", await prepareImageForOcr(file));
       const response = await fetch(`${API_URL}/ocr/label`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -319,10 +378,13 @@ export function FoodAnalysisPage() {
         basisUnit: basis?.unit === "ml" ? "ml" : "g",
         basisSource: data.basis ? "label" : data.totalAmount ? "total" : "none",
         totalText: data.totalAmount?.text ?? "",
+        basisText: basis?.text ?? "",
         raw,
         allergenText: data.allergenText ?? [],
         mayContain: data.mayContain ?? [],
         warnings: data.warnings ?? [],
+        ingredients: Array.isArray(data.ingredients) ? data.ingredients : [],
+        foodType: data.foodType ?? null,
       });
     } catch {
       setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
@@ -340,6 +402,27 @@ export function FoodAnalysisPage() {
     const nutritionPer100g = computePer100(labelForm);
     if (Object.values(nutritionPer100g).some((v) => v === null)) return;
 
+    await runLabelAnalysis({
+      productName: labelForm.productName.trim(),
+      foodType: labelForm.foodType,
+      nutritionPer100g,
+      allergenText: labelForm.allergenText,
+      mayContain: labelForm.mayContain,
+      ocrWarnings: labelForm.warnings,
+      ingredients: labelForm.ingredients,
+      basis: {
+        amount: Number(labelForm.basisAmount),
+        unit: labelForm.basisUnit,
+        text: labelForm.basisText,
+      },
+    });
+  };
+
+  /**
+   * [추가] 라벨 값으로 POST /recommend/label → 결과 화면
+   * OCR 확인 화면의 "이 값으로 분석하기"와, 프로필 "내 식품" 의 사진 결과 다시 분석이 같이 쓴다
+   */
+  const runLabelAnalysis = async (input: LabelInput) => {
     setIsAnalyzing(true);
     setShowResults(false);
     setErrorMessage("");
@@ -351,14 +434,7 @@ export function FoodAnalysisPage() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({
-          userId: user?.id ?? 1,
-          productName: labelForm.productName.trim(),
-          nutritionPer100g,
-          allergenText: labelForm.allergenText,
-          mayContain: labelForm.mayContain,
-          ocrWarnings: labelForm.warnings,
-        }),
+        body: JSON.stringify({ userId: user?.id ?? 1, ...input }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -367,10 +443,40 @@ export function FoodAnalysisPage() {
       }
       setAnalysisResult(data);
       setShowResults(true);
+      // [추가] 분석이 끝나면 확인·수정 칸을 닫고 결과만 보이게 (맨 위로)
+      setLabelForm(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
       setErrorMessage("서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.");
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  /** [추가] 하트: 관심 식품 추가/빼기. 화면을 먼저 바꾸고 실패하면 되돌린다 */
+  const handleToggleFavorite = async (result: AnalysisResult) => {
+    const source = result.source === "ocr" ? "label" : "db";
+    const key = favoriteKey(source, result.productName);
+    const wasFavorite = favoriteKeys.has(key);
+    const update = (on: boolean) =>
+      setFavoriteKeys((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    update(!wasFavorite);
+    try {
+      if (wasFavorite) await removeFavorite(token, result.productName, source);
+      else
+        await addFavorite(
+          token,
+          result.productName,
+          result.category ?? null,
+          source === "label" ? (result.labelInput ?? null) : null,
+        );
+    } catch {
+      update(wasFavorite);
     }
   };
 
@@ -384,7 +490,14 @@ export function FoodAnalysisPage() {
           </p>
         </div>
 
-        <Tabs defaultValue="search" className="mb-8">
+        <Tabs
+          defaultValue="search"
+          className="mb-8"
+          // [추가] 사진 분석 결과를 보다가 탭을 바꾸면 결과를 닫는다 → OCR 탭으로 돌아오면 촬영 카드가 다시 보인다
+          onValueChange={() => {
+            if (analysisResult?.source === "ocr") setShowResults(false);
+          }}
+        >
           {/* 바코드 탭 삭제 → 검색 / OCR 2칸 */}
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="search">
@@ -447,6 +560,8 @@ export function FoodAnalysisPage() {
           </TabsContent>
 
           <TabsContent value="ocr">
+            {/* [변경] 사진 분석 결과를 보는 동안은 촬영 카드를 숨긴다 (탭을 바꾸면 다시 보인다) */}
+            {!(showResults && analysisResult?.source === "ocr") && (
             <Card className="p-12 text-center">
               <Camera className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-gray-600 mb-4">영양성분표를 촬영하세요</p>
@@ -465,6 +580,7 @@ export function FoodAnalysisPage() {
                 {isReadingLabel ? "라벨 읽는 중..." : "사진 촬영하기"}
               </Button>
             </Card>
+            )}
 
             {/* 읽은 값 확인·수정 */}
             {labelForm && (() => {
@@ -603,13 +719,17 @@ export function FoodAnalysisPage() {
           // 걸린 알레르기: 새 필드 allergens, 없으면 예전 필드 allergenAlert
           const allergens =
             analysisResult.allergens ?? analysisResult.allergenAlert ?? [];
+          // [추가] 관심 식품 여부 (사진 결과와 검색 결과는 따로)
+          const isFavorite = favoriteKeys.has(
+            favoriteKey(analysisResult.source === "ocr" ? "label" : "db", analysisResult.productName),
+          );
 
           return (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* ── 1. 판정 카드 (알레르기 배지·결론·성분 상자 포함) ── */}
               {/* key: 제품이 바뀌면 판정 카드 슬라이드도 1페이지부터 */}
               <VerdictCard
-                key={analysisResult.productName}
+                key={`verdict-${analysisResult.productName}`}
                 productName={analysisResult.productName}
                 verdict={analysisResult.verdict}
                 giCategory={analysisResult.giCategory}
@@ -617,6 +737,22 @@ export function FoodAnalysisPage() {
                 carbInfo={analysisResult.carbInfo}
                 allergens={allergens}
                 allergyUnknown={analysisResult.allergyUnknown ?? false}
+                categoryIcon={getCategoryIcon(analysisResult.category)}
+                categoryName={analysisResult.category ?? null}
+                headerAction={
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFavorite(analysisResult)}
+                    aria-label={isFavorite ? "관심 식품에서 빼기" : "관심 식품에 추가"}
+                    aria-pressed={isFavorite}
+                    title={isFavorite ? "관심 식품에서 빼기" : "관심 식품에 추가"}
+                    className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/70"
+                  >
+                    <Heart
+                      className={`w-5 h-5 ${isFavorite ? "text-red-500 fill-red-500" : "text-gray-400"}`}
+                    />
+                  </button>
+                }
               />
 
               {/* ── OCR 결과 안내: 혼입 가능은 함유보다 약한 주의 ── */}
@@ -642,11 +778,16 @@ export function FoodAnalysisPage() {
               {/* ── 3. 영양 정보 슬라이드 카드 (1페이지 영양소 균형 / 2페이지 영양성분 분석) ──
                   key 로 제품이 바뀌면 1페이지부터 다시 보이게 한다 */}
               <NutritionSlideCard
-                key={analysisResult.productName}
+                key={`nutrition-${analysisResult.productName}`}
                 radar={analysisResult.radar ?? []}
                 calories={analysisResult.nutrition.calories}
                 isMlTrack={analysisResult.diseaseTrack === "diabetes"}
               />
+
+              {/* ── 4. [변경] 원재료 + 설명 말풍선: 맨 아래, 식품 라벨 모양 ── */}
+              {Array.isArray(analysisResult.ingredients) && (
+                <IngredientsCard ingredients={analysisResult.ingredients} />
+              )}
             </div>
           );
         })()}

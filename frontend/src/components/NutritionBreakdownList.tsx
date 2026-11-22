@@ -4,6 +4,10 @@
  * 역할: "영양성분 분석" 목록. 영양소마다 "100g당 양 / 1일 한도 (몇 %)" 와 가로 막대를 보여준다.
  *
  * 이번에 바뀐 점:
+ *   - [추가] 막대마다 1일 한도 25% 위치에 빨간 점선 (레이더 그래프의 비추천 기준선과 같은 값, HIGH_LINE)
+ *       목록 아래에 점선 설명 한 줄
+ *
+ * 이전 변경:
  *   - FoodAnalysisPage.tsx 안에 있던 "영양 성분 분석" 카드 내용을 그대로 옮겨 컴포넌트로 분리했다.
  *     (영양 정보 슬라이드 카드의 2페이지로 쓰기 위해서. 값·기준·계산은 변경 없음)
  *   - 제목 줄은 슬라이드 카드가 공통으로 그리므로 여기에는 없다.
@@ -15,6 +19,9 @@
 
 import { Progress } from "../app/components/ui/progress";
 import type { RadarAxis } from "./NutrientRadarChart";
+
+// 비추천 판정 기준선 — 1일 한도의 25% (NutrientRadarChart 의 HIGH_LINE 과 같은 값)
+const HIGH_LINE = 25;
 
 type Props = {
   /** 백엔드 응답의 radar 배열 */
@@ -52,13 +59,25 @@ export function NutritionBreakdownList({ data }: Props) {
                 </span>
               </div>
               {/* Progress는 100을 넘으면 꽉 찬 상태로 보이므로 값을 100에서 자른다 */}
-              <Progress value={Math.min(percent, 100)} className="h-2" />
+              <div className="relative">
+                <Progress value={Math.min(percent, 100)} className="h-2" />
+                {/* [추가] 25% 한도선 (빨간 점선) */}
+                <div
+                  aria-hidden
+                  className="absolute -top-1 -bottom-1 border-l-2 border-dashed border-red-500"
+                  style={{ left: `${HIGH_LINE}%` }}
+                />
+              </div>
             </div>
           );
         })}
       </div>
       <p className="text-xs text-gray-400 mt-4">
         괄호 안 %는 이 제품을 100g 섭취했을 때 1일 한도 대비 비율입니다.
+      </p>
+      <p className="text-xs text-gray-400 mt-1 flex items-center gap-1.5">
+        <span aria-hidden className="inline-block w-4 border-t-2 border-dashed border-red-500" />
+        비추천 기준선 (100g당 1일 한도의 25%)
       </p>
     </div>
   );

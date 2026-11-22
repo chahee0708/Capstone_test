@@ -10,7 +10,8 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
-const { parseLabel, toPer100 } = require("../services/labelParser");
+const { parseLabel, toPer100, mergeBrokenIngredients } = require("../services/labelParser");
+const { labelCategory } = require("../services/labelCategory");
 
 const sample = JSON.parse(
   fs.readFileSync(path.join(__dirname, "ocr_samples/label_sample_clova.json"), "utf8"),
@@ -290,4 +291,62 @@ test("글자가 없어도 죽지 않는다", () => {
   assert.strictEqual(r.basis, null);
   assert.deepStrictEqual(r.ingredients, []);
   assert.strictEqual(r.rawText, "");
+});
+
+// ── [추가] 표 모양 라벨 (연세우유 솔티카라멜생크림빵, 휴대폰 사진의 실제 CLOVA 응답) ──────────
+//   - 기준량이 "총 내용량당" 으로만 쓰이고 양은 "총 내용량 150g" 줄에 따로 있다
+//   - 영양성분 이름 칸과 값 칸이 서로 다른 줄로 나뉜다 ("나트륨" | "310 mg" | "16%")
+//   - 혼입 문구에서 이름이 줄 끝에서 잘린다 ("…복숭아, 토" / "마토, …", "…있는 메" / "밀, …")
+const tableFields = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "ocr_samples", "table_label_fields.json"), "utf8"),
+);
+
+test("표 모양 라벨: '총 내용량당' 기준량을 '총 내용량 150g' 에서 가져온다", () => {
+  const r = parseLabel(tableFields);
+  assert.deepStrictEqual({ amount: r.basis.amount, unit: r.basis.unit }, { amount: 150, unit: "g" });
+});
+
+test("표 모양 라벨: 이름 칸과 값 칸이 나뉘어도 같은 높이의 '숫자+단위' 칸을 읽는다", () => {
+  const r = parseLabel(tableFields);
+  assert.deepStrictEqual(r.nutritionRaw, {
+    calories: 468, sodium: 310, carbohydrate: 65, sugar: 27, fat: 20,
+    transFat: 0.06, saturatedFat: 14, cholesterol: 30, protein: 7,
+  });
+  assert.strictEqual(r.nutritionPer100g.calories, 312);
+});
+
+test("표 모양 라벨: 줄 끝에서 잘린 혼입 이름을 잇는다 (토마토, 메밀)", () => {
+  const r = parseLabel(tableFields);
+  assert.ok(r.mayContain.includes("토마토"), r.mayContain.join(","));
+  assert.ok(r.mayContain.includes("메밀"), r.mayContain.join(","));
+  assert.ok(!r.mayContain.includes("마토"));
+  assert.deepStrictEqual(r.warnings, []);
+});
+
+test("표 모양 라벨: [ ] 안의 쉼표에서는 원재료를 나누지 않는다", () => {
+  const r = parseLabel(tableFields);
+  assert.ok(
+    r.ingredients.some((i) => i.startsWith("식물성크림[") && i.endsWith("]")),
+    r.ingredients.join(" | "),
+  );
+  assert.ok(!r.ingredients.includes("물엿]"));
+});
+
+test("예전에 잘못 나뉜 원재료를 괄호가 닫힐 때까지 다시 합친다", () => {
+  assert.deepStrictEqual(
+    mergeBrokenIngredients(["밀가루1(밀: 미국산)", "식물성크림[팜핵경화유(인도네시아산)", "물엿", "혼합제제(카제인나트륨,설탕)]", "설탕"]),
+    ["밀가루1(밀: 미국산)", "식물성크림[팜핵경화유(인도네시아산), 물엿, 혼합제제(카제인나트륨,설탕)]", "설탕"],
+  );
+});
+
+test("식품유형 → 통합 중분류", () => {
+  assert.strictEqual(labelCategory("빵류", "연세우유 솔티카라멜생크림빵"), "간식빵");
+  assert.strictEqual(labelCategory("빵류", "우유식빵"), "식빵·모닝빵");
+  assert.strictEqual(labelCategory("과자", "초코파이"), "과자");
+  assert.strictEqual(labelCategory("캔디류", "아무 사탕"), "사탕·캔디");
+  assert.strictEqual(labelCategory("아이스크림", "바닐라"), "아이스크림");
+  assert.strictEqual(labelCategory("과·채주스", "오렌지"), "과일·야채음료");
+  assert.strictEqual(labelCategory("혼합음료", "이온 음료"), "스포츠음료");
+  assert.strictEqual(labelCategory(null, "초코파이"), null);
+  assert.strictEqual(labelCategory("알 수 없는 유형", "x"), null);
 });
