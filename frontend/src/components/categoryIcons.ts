@@ -5,7 +5,11 @@
  *
  * 쓰이는 곳: VerdictCard.tsx (제품명 옆 그림), MyFoodsPanel.tsx (목록 그림)
  *
- * 이번 변경: png 그림 28개 추가 (양념·음료·유제품·반찬·간편식 등, 기존 svg 가 없던 중분류)
+ * 이번 변경: 남은 중분류 16개 png 그림 추가 → category_map.csv 의 중분류 58개 모두 그림이 있다
+ *   png 는 원본보다 채도 +25% (수채화풍이라 svg 옆에서 흐려 보여서). 새 png 를 넣을 때도 같은 보정을 한다
+ *   (흰 배경 → 투명 처리 후 PIL ImageEnhance.Color(1.25), 알파는 그대로)
+ *
+ * 이전 변경: png 그림 28개 추가 (양념·음료·유제품·반찬·간편식 등, 기존 svg 가 없던 중분류)
  *   그림은 정사각형이 아니어서 쓰는 쪽에서 object-contain 으로 비율을 지킨다
  *
  * 그림 추가 방법:
@@ -55,6 +59,23 @@ import coffee from "../assets/category/coffee.png";
 import ketchup from "../assets/category/ketchup.png";
 import pickle from "../assets/category/pickle.png";
 import redGinsengDrink from "../assets/category/red-ginseng-drink.png";
+// [추가] 남은 중분류 16개 png 그림 → 모든 중분류에 그림이 있다
+import soup from "../assets/category/soup.png";
+import mealKit from "../assets/category/meal-kit.png";
+import otherDrink from "../assets/category/other-drink.png";
+import lunchbox from "../assets/category/lunchbox.png";
+import tofu from "../assets/category/tofu.png";
+import riceCake from "../assets/category/rice-cake.png";
+import noodles from "../assets/category/noodles.png";
+import sauce from "../assets/category/sauce.png";
+import liquor from "../assets/category/liquor.png";
+import steamedDumplings from "../assets/category/steamed-dumplings.png";
+import fishCake from "../assets/category/fish-cake.png";
+import jeotgal from "../assets/category/jeotgal.png";
+import braisedSideDish from "../assets/category/braised-side-dish.png";
+import nuts from "../assets/category/nuts.png";
+import steak from "../assets/category/steak.png";
+import grainDrink from "../assets/category/grain-drink.png";
 
 export const CATEGORY_ICONS: Record<string, string> = {
   과자: snack,
@@ -100,6 +121,23 @@ export const CATEGORY_ICONS: Record<string, string> = {
   토마토케첩: ketchup,
   "절임·장아찌": pickle, // 피클
   "홍삼·건강음료": redGinsengDrink,
+  // [추가] 남은 16개
+  "국·탕·찌개": soup, // 된장국
+  "기타 간편식": mealKit, // 밀키트 포장
+  기타음료: otherDrink, // 라벨 없는 페트병
+  "밥·도시락·죽": lunchbox, // 도시락
+  "두부·묵": tofu,
+  "떡·한과": riceCake,
+  "국수·면": noodles,
+  소스: sauce,
+  주류: liquor, // 초록 병
+  만두: steamedDumplings, // 찐만두
+  "어묵·맛살": fishCake, // 어묵 꼬치
+  젓갈: jeotgal,
+  "조림·볶음반찬": braisedSideDish,
+  견과류: nuts,
+  고기요리: steak,
+  "곡물·분말음료": grainDrink, // 곡물 음료 병
 };
 
 export function getCategoryIcon(category: string | null | undefined): string | null {
