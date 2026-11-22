@@ -216,7 +216,14 @@ export function ProfilePage() {
         };
       });
 
-      toast.success("건강검진표 분석이 완료되었습니다!", { id: toastId });
+      // [추가] 검진표에 e-GFR 칸이 없어 크레아티닌·나이·성별로 계산한 경우 알려 준다
+      toast.success("건강검진표 분석이 완료되었습니다!", {
+        id: toastId,
+        description:
+          extracted.gfrEstimated && extracted.gfr != null
+            ? `e-GFR ${extracted.gfr}은 혈청 크레아티닌으로 계산한 값이에요.`
+            : undefined,
+      });
     } catch (err: any) {
       toast.error(`OCR 처리 실패: ${err.message}`, { id: toastId });
     } finally {
