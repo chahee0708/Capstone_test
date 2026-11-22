@@ -13,7 +13,15 @@
  *      - 1페이지: 영양소 균형 (NutrientRadarChart)
  *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
  *
- * ── 이번 변경(OCR 탭 연결) ───────────────────────────────────
+ * ── 이번 변경(OCR 확인 화면: 기준량 수정 + 100g당 재계산) ──────────
+ *   - 영양성분 칸에 사진에 적힌 값(nutritionRaw)을 보여주고, 칸 아래에 100g당 값을 자동 계산해 표시
+ *   - 기준량 칸(숫자 + g/ml) 추가. 기준량이나 원본값을 고치면 100g당 값이 바로 다시 계산된다
+ *       계산: utils/per100.ts (백엔드 labelParser.js 의 toPer100 과 같은 식)
+ *   - 기준량("~당")을 못 읽으면 총 내용량(totalAmount)으로 미리 채우고 확인 안내, 둘 다 없으면 비워 두고 입력 안내
+ *   - 기준량이나 영양성분 칸이 하나라도 비면 "이 값으로 분석하기" 버튼 비활성
+ *   - POST /recommend/label 로는 지금처럼 nutritionPer100g 를 보낸다 (서버 변경 없음)
+ *
+ * ── 이전 변경(OCR 탭 연결) ───────────────────────────────────
  *   - 사진 선택 → POST /ocr/label → 제품명과 100g당 영양성분 9개를 수정 칸으로 표시, 알레르기 문구 표시
  *   - "이 값으로 분석하기" → POST /recommend/label → 기존 결과 화면 사용
  *   - 결과 화면에 혼입 가능 주의, 알레르기 확인 미완료 안내 추가 (OCR 결과에만 값이 있다)
@@ -52,6 +60,14 @@ import { Search, Camera, AlertCircle } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card } from "../components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import { isValidBasis, toPer100 } from "../../utils/per100";
 import {
   Tabs,
   TabsContent,
@@ -138,14 +154,37 @@ const LABEL_NUTRIENTS = [
   { key: "protein", label: "단백질", unit: "g" },
 ];
 
-// POST /ocr/label 응답 중 이 화면에서 쓰는 값. 영양성분은 수정할 수 있게 문자열로 보관한다
+// POST /ocr/label 응답 중 이 화면에서 쓰는 값. 숫자 칸은 수정할 수 있게 문자열로 보관한다
 type LabelForm = {
   productName: string;
-  nutrition: Record<string, string>;
+  basisAmount: string; // 기준량 숫자 (못 읽었으면 "")
+  basisUnit: "g" | "ml";
+  basisSource: "label" | "total" | "none"; // 기준량 출처: "~당" 문구 / 총 내용량 / 없음
+  totalText: string; // 총 내용량 문구 (안내 문장용)
+  raw: Record<string, string>; // 사진에 적힌 값 (기준량당)
   allergenText: string[];
   mayContain: string[];
   warnings: string[];
 };
+
+/** 문자열 칸 → 0 이상의 숫자. 비었거나 숫자가 아니면 null */
+function parseAmount(text: string): number | null {
+  if (text.trim() === "") return null;
+  const value = Number(text);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** 확인 화면 값으로 100g당 값 계산. 기준량이 없으면 전부 null, 원본값이 빈 칸은 null */
+function computePer100(form: LabelForm): Record<string, number | null> {
+  const basis = parseAmount(form.basisAmount);
+  const result: Record<string, number | null> = {};
+  for (const { key } of LABEL_NUTRIENTS) {
+    const value = parseAmount(form.raw[key]);
+    result[key] =
+      basis !== null && isValidBasis(basis) && value !== null ? toPer100(value, basis) : null;
+  }
+  return result;
+}
 
 export function FoodAnalysisPage() {
   const { user, token } = useAuth();
@@ -266,15 +305,21 @@ export function FoodAnalysisPage() {
         return;
       }
 
-      // 못 읽은 값(null)은 빈 칸으로 둔다 (0 으로 채우지 않는다)
-      const nutrition: Record<string, string> = {};
+      // 사진에 적힌 값을 넣고, 못 읽은 값(null)은 빈 칸으로 둔다 (0 으로 채우지 않는다)
+      const raw: Record<string, string> = {};
       for (const { key } of LABEL_NUTRIENTS) {
-        const value = data.nutritionPer100g?.[key];
-        nutrition[key] = value === null || value === undefined ? "" : String(value);
+        const value = data.nutritionRaw?.[key];
+        raw[key] = value === null || value === undefined ? "" : String(value);
       }
+      // 기준량: "~당" 문구 → 없으면 총 내용량 → 둘 다 없으면 빈 칸
+      const basis = data.basis ?? data.totalAmount ?? null;
       setLabelForm({
         productName: data.productName ?? "",
-        nutrition,
+        basisAmount: basis ? String(basis.amount) : "",
+        basisUnit: basis?.unit === "ml" ? "ml" : "g",
+        basisSource: data.basis ? "label" : data.totalAmount ? "total" : "none",
+        totalText: data.totalAmount?.text ?? "",
+        raw,
         allergenText: data.allergenText ?? [],
         mayContain: data.mayContain ?? [],
         warnings: data.warnings ?? [],
@@ -291,16 +336,13 @@ export function FoodAnalysisPage() {
   /** "이 값으로 분석하기": 수정 칸의 값으로 POST /recommend/label 호출 → 기존 결과 화면 */
   const handleAnalyzeLabel = async () => {
     if (!labelForm) return;
+    // 화면에 보이는 100g당 값을 그대로 보낸다 (빈 값이 있으면 버튼이 비활성이라 여기까지 오지 않는다)
+    const nutritionPer100g = computePer100(labelForm);
+    if (Object.values(nutritionPer100g).some((v) => v === null)) return;
+
     setIsAnalyzing(true);
     setShowResults(false);
     setErrorMessage("");
-
-    // 빈 칸은 null 로 보낸다 → 백엔드가 400 으로 막는다
-    const nutritionPer100g: Record<string, number | null> = {};
-    for (const { key } of LABEL_NUTRIENTS) {
-      const value = labelForm.nutrition[key].trim();
-      nutritionPer100g[key] = value === "" ? null : Number(value);
-    }
 
     try {
       const response = await fetch(`${API_URL}/recommend/label`, {
@@ -425,7 +467,14 @@ export function FoodAnalysisPage() {
             </Card>
 
             {/* 읽은 값 확인·수정 */}
-            {labelForm && (
+            {labelForm && (() => {
+              // 입력할 때마다 다시 계산한다
+              const per100 = computePer100(labelForm);
+              const basisValue = parseAmount(labelForm.basisAmount);
+              const basisMissing = basisValue === null || !isValidBasis(basisValue);
+              const rawMissing = LABEL_NUTRIENTS.some(({ key }) => parseAmount(labelForm.raw[key]) === null);
+
+              return (
               <Card className="p-6 mt-4 space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-1" htmlFor="label-product-name">
@@ -440,8 +489,51 @@ export function FoodAnalysisPage() {
                   />
                 </div>
 
+                {/* 기준량: 영양성분표가 몇 g(ml) 기준인지 */}
                 <div>
-                  <p className="text-sm font-medium mb-2">영양성분 (100g당)</p>
+                  <label className="block text-sm font-medium mb-1" htmlFor="label-basis">
+                    기준량
+                  </label>
+                  <div className="flex gap-2 max-w-xs">
+                    <Input
+                      id="label-basis"
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={labelForm.basisAmount}
+                      onChange={(e) => setLabelForm({ ...labelForm, basisAmount: e.target.value })}
+                    />
+                    <Select
+                      value={labelForm.basisUnit}
+                      onValueChange={(unit) =>
+                        setLabelForm({ ...labelForm, basisUnit: unit as "g" | "ml" })
+                      }
+                    >
+                      <SelectTrigger className="w-24" aria-label="기준량 단위">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="g">g</SelectItem>
+                        <SelectItem value="ml">ml</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {basisMissing ? (
+                    <p className="text-sm text-amber-700 mt-1">
+                      포장지의 총 내용량 또는 1회 제공량을 입력해주세요
+                    </p>
+                  ) : (
+                    labelForm.basisSource === "total" && (
+                      <p className="text-sm text-amber-700 mt-1">
+                        기준량 문구를 찾지 못해 {labelForm.totalText || "총 내용량"}(으)로 채웠어요.
+                        영양성분표가 총 내용량 기준인지 확인해주세요
+                      </p>
+                    )
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium mb-2">영양성분 (사진에 적힌 값)</p>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {LABEL_NUTRIENTS.map(({ key, label, unit }) => (
                       <div key={key}>
@@ -453,17 +545,24 @@ export function FoodAnalysisPage() {
                           type="number"
                           min="0"
                           step="any"
-                          value={labelForm.nutrition[key]}
+                          value={labelForm.raw[key]}
                           onChange={(e) =>
                             setLabelForm({
                               ...labelForm,
-                              nutrition: { ...labelForm.nutrition, [key]: e.target.value },
+                              raw: { ...labelForm.raw, [key]: e.target.value },
                             })
                           }
                         />
+                        {/* 100g당 값 (읽기 전용, ml 도 1ml = 1g) */}
+                        <p className="text-xs text-gray-500 mt-1">
+                          100g당 {per100[key] ?? "—"}
+                        </p>
                       </div>
                     ))}
                   </div>
+                  {rawMissing && (
+                    <p className="text-sm text-amber-700 mt-2">비어 있는 영양성분을 입력해주세요</p>
+                  )}
                 </div>
 
                 <div className="text-sm text-gray-700 space-y-1">
@@ -479,15 +578,17 @@ export function FoodAnalysisPage() {
                   </ul>
                 )}
 
+                {/* 기준량이나 영양성분 칸이 비면 분석할 수 없다 */}
                 <Button
                   onClick={handleAnalyzeLabel}
-                  disabled={isAnalyzing}
+                  disabled={isAnalyzing || basisMissing || rawMissing}
                   className="bg-emerald-600 hover:bg-emerald-700"
                 >
                   {isAnalyzing ? "분석 중..." : "이 값으로 분석하기"}
                 </Button>
               </Card>
-            )}
+              );
+            })()}
 
             {errorMessage && (
               <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">

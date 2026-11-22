@@ -26,10 +26,16 @@
  *   allergenText, mayContain 의 이름이 프로젝트 알레르기 목록에 없으면 warnings 에 적는다.
  *   잘린 글자("돼지고" + "기 함유" → "기")를 놓치지 않기 위해서이며, 이름은 결과에서 빼지 않는다.
  *
- * 이번 변경: 새 파일
+ * 이번 변경(fix/ocr-improve):
+ *   - [변경] 알레르기 이름 목록을 allergenMap.js 공통 파일에서 가져온다 (동작 같음)
+ *   - [추가] 응답에 totalAmount ("총 내용량 105 g" → { amount, unit, text }, 없으면 null)
+ *     기준량을 못 읽은 라벨에서 프론트 확인 화면이 기준량 칸을 미리 채운다. 기존 필드는 그대로
  *
  * 호출: backend/routes/ocr.js (POST /ocr/label)
  */
+
+// 알레르기 이름 목록 (공통 파일. clean_foods.py 와 같게 유지)
+const { isKnownAllergen } = require("./allergenMap");
 
 // 영양성분 정의. 키 이름은 foodService.getFoodNutrition 과 같다
 const NUTRIENTS = [
@@ -170,6 +176,21 @@ function findBasis(lines, warnings) {
   };
 }
 
+/**
+ * [추가] "총 내용량 105 g" 의 숫자와 단위. 없으면 null
+ * 기준량("~당")을 못 찾은 라벨에서 프론트가 기준량 칸을 미리 채우는 데 쓴다 (판정에는 쓰지 않는다)
+ */
+function findTotalAmount(lines) {
+  const pattern = /총\s*내\s*용\s*량\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(g|ml)(?![a-z])/i;
+  for (const line of lines) {
+    const match = line.text.match(pattern);
+    if (match && parseFloat(match[1]) > 0) {
+      return { amount: parseFloat(match[1]), unit: match[2].toLowerCase(), text: match[0].trim() };
+    }
+  }
+  return null;
+}
+
 /** 열량: "열량 184 kcal" 우선, 없으면 "당184kcal" 처럼 표 위 문구에서. 안내문 "2,000 kcal 기준" 은 제외 */
 function findCalories(lines, pattern) {
   for (const line of lines) {
@@ -283,22 +304,6 @@ function findIngredients(lines, warnings, allergenLines) {
   return ingredients;
 }
 
-// 알레르기 표기 목록. 출처: data_pipeline/clean_foods.py 의 ALLERGEN_MAP, ALLERGEN_PREFIX_MAP
-// (Neo4j Allergy 노드도 여기서 만들어진다. 파이프라인에 표기를 추가하면 여기도 같이 추가할 것)
-const KNOWN_ALLERGENS = new Set([
-  "계란", "달걀", "알류", "난류",
-  "쇠고기", "소고기", "돼지고기", "닭고기",
-  "굴", "홍합", "이산화황", "아황산류",
-  "잣", "산양유", "우유", "대두", "밀", "땅콩",
-  "새우", "토마토", "오징어", "호두", "게",
-  "복숭아", "메밀", "고등어", "헤이즐넛",
-]);
-
-/** 목록에 있는 이름인지 (띄어쓰기와 뒤 괄호 무시. "알류(달걀)" → 알류, "조개류(굴)" → 조개류) */
-function isKnownAllergen(name) {
-  const base = name.replace(/\s+/g, "").replace(/\(.*\)$/, "");
-  return KNOWN_ALLERGENS.has(base) || base.startsWith("조개류");
-}
 
 /** 문구 목록에서 패턴을 찾아 쉼표로 나눈 이름 배열로 */
 function collectNames(texts, pattern, isExcluded = () => false) {
@@ -446,6 +451,7 @@ function parseLabel(fields) {
     productName,
     foodType,
     basis,
+    totalAmount: findTotalAmount(lines),
     nutritionRaw,
     nutritionPer100g: toNutritionPer100g(nutritionRaw, basis),
     ingredients,

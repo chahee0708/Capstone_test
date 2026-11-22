@@ -272,6 +272,18 @@ test("괄호 안 함유 문구: 이름은 잡고 원재료는 유지한다", () 
   assert.deepStrictEqual(r.ingredients, ["물엿", "유크림(우유 함유)"]);
 });
 
+test("총 내용량: 실제 샘플은 기준량과 따로 읽는다", () => {
+  assert.deepStrictEqual(result.totalAmount, { amount: 165, unit: "g", text: "총 내용량 165 g" });
+  assert.strictEqual(result.basis.amount, 55); // 기준량은 그대로 1봉지(55 g)
+});
+
+test("총 내용량: 기준량 문구가 없어도 읽고, 둘 다 없으면 null", () => {
+  const r = parseLabel(fragmentsFrom(["총 내용량 105 g", "425 kcal", "나트륨 950 mg"]));
+  assert.strictEqual(r.basis, null);
+  assert.deepStrictEqual(r.totalAmount, { amount: 105, unit: "g", text: "총 내용량 105 g" });
+  assert.strictEqual(parseLabel(fragmentsFrom(["나트륨 950 mg"])).totalAmount, null);
+});
+
 test("글자가 없어도 죽지 않는다", () => {
   const r = parseLabel([]);
   assert.strictEqual(r.productName, null);

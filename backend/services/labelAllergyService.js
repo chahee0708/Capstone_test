@@ -5,38 +5,21 @@
  *       반환 이름은 allergyService.checkAllergens 와 같은 규칙이다
  *         예) 사용자 "갑각류", 라벨 새우 → "갑각류(새우)" / 사용자 "우유", 라벨 우유 → "우유"
  *
- * 이번 변경: 새 파일
+ * 이번 변경(fix/ocr-improve):
+ *   - [변경] 알레르기 목록을 allergenMap.js 공통 파일에서 가져온다 (비교 결과 같음)
+ *   - [추가] isAllergyCheckIncomplete: 알레르기 확인을 끝낼 수 없는지
+ *       함유 문구가 없거나, 함유·혼입 이름 중 목록에 없는 것(잘못 읽은 글자)이 있으면 true
+ *       기준량·식품유형 같은 다른 OCR 경고는 조건에 넣지 않는다
+ *   - [추가] findIngredientAllergens: 원재료 이름으로 사용자 알레르기 찾기 (allergenMap.INGREDIENT_RULES)
  *
  * 호출: backend/routes/recommend.js (POST /recommend/label)
  */
 
-// 표기 → 통일 이름, 그룹. 출처: data_pipeline/clean_foods.py 의 ALLERGEN_MAP, ALLERGEN_GROUPS
-// (파이프라인에 표기를 추가하면 여기도 같이 추가할 것)
-const ALLERGEN_MAP = {
-  계란: "계란", 달걀: "계란", 알류: "계란", 난류: "계란",
-  쇠고기: "쇠고기", 소고기: "쇠고기",
-  돼지고기: "돼지고기",
-  굴: "조개류", 홍합: "조개류",
-  이산화황: "아황산류",
-  잣: "잣", 산양유: "산양유",
-  우유: "우유", 대두: "대두", 밀: "밀", 땅콩: "땅콩", 닭고기: "닭고기",
-  새우: "새우", 토마토: "토마토", 오징어: "오징어", 호두: "호두", 게: "게",
-  아황산류: "아황산류", 복숭아: "복숭아", 메밀: "메밀", 고등어: "고등어",
-  헤이즐넛: "헤이즐넛",
-};
+const { toUnifiedAllergen, groupOf, allergensInIngredient } = require("./allergenMap");
 
-const ALLERGEN_GROUPS = {
-  호두: "견과류", 헤이즐넛: "견과류", 잣: "견과류",
-  산양유: "우유",
-  새우: "갑각류", 게: "갑각류",
-  고등어: "생선",
-};
-
-/** 띄어쓰기와 뒤 괄호를 지운 뒤 통일 이름으로. 목록에 없으면 지운 글자 그대로 */
+/** 통일 이름으로. 목록에 없으면 띄어쓰기를 지운 글자 그대로 (사용자가 직접 적은 이름 비교용) */
 function unify(name) {
-  const base = String(name).replace(/\s+/g, "").replace(/\(.*\)$/, "");
-  if (base.startsWith("조개류")) return "조개류";
-  return ALLERGEN_MAP[base] ?? base;
+  return toUnifiedAllergen(name) ?? String(name).replace(/\s+/g, "");
 }
 
 /**
@@ -53,7 +36,7 @@ function matchLabelAllergens(labelNames, userAllergens) {
       const unified = unify(labelName);
       if (unified === userUnified) {
         found.push(userName);
-      } else if ((ALLERGEN_GROUPS[unified] ?? unified) === userName) {
+      } else if (groupOf(unified) === userName) {
         found.push(`${userName}(${unified})`);
       }
     }
@@ -61,4 +44,30 @@ function matchLabelAllergens(labelNames, userAllergens) {
   return [...new Set(found)];
 }
 
-module.exports = { matchLabelAllergens };
+/**
+ * 원재료 이름으로 사용자 알레르기 찾기 (예: 유크림 → 우유)
+ * @param {string[]} ingredients   - 라벨 원재료 이름
+ * @param {string[]} userAllergens - 사용자 알레르기 (이름 또는 그룹)
+ * @returns {{ allergen: string, ingredient: string }[]} 걸린 알레르기(사용자 기준 이름)와 원재료
+ */
+function findIngredientAllergens(ingredients, userAllergens) {
+  const found = [];
+  for (const ingredient of ingredients) {
+    for (const allergen of matchLabelAllergens(allergensInIngredient(ingredient), userAllergens)) {
+      found.push({ allergen, ingredient });
+    }
+  }
+  return found;
+}
+
+/**
+ * 알레르기 확인을 끝낼 수 없는지 (true 면 "안전" 으로 표시하지 않는다)
+ * @param {string[]} allergenText - 라벨의 함유 이름
+ * @param {string[]} mayContain   - 라벨의 혼입 가능 이름
+ */
+function isAllergyCheckIncomplete(allergenText, mayContain) {
+  if (allergenText.length === 0) return true; // 함유 문구를 못 찾음
+  return [...allergenText, ...mayContain].some((name) => toUnifiedAllergen(name) === null);
+}
+
+module.exports = { matchLabelAllergens, findIngredientAllergens, isAllergyCheckIncomplete };

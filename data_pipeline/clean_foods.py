@@ -225,6 +225,8 @@ ANNOTATION_ITEM = re.compile(
 )
 
 # [추가] 알레르기 이름 통일 맵: 원본 표기 → 통일 이름 (None = 알레르기 성분 아님, 삭제)
+# ※ backend/services/allergenMap.js 와 같게 유지해야 함 (ALLERGEN_MAP / ALLERGEN_PREFIX_MAP / ALLERGEN_GROUPS 모두)
+#   두 목록이 같은지는 backend/test/allergenMap.test.js 가 검사한다
 ALLERGEN_MAP = {
     "계란": "계란", "달걀": "계란", "알류": "계란", "알류(달걀)": "계란",
     "알류(계란)": "계란", "난류": "계란",  # [추가]

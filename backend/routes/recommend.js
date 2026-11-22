@@ -17,7 +17,14 @@
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(OCR 라벨 분석) ────────────────────────────────
+ * ── 이번 변경(fix/ocr-improve) ───────────────────────────────
+ *   - [변경] POST /recommend/label 의 allergyCheckIncomplete 조건을 알레르기 관련만으로 정리
+ *       함유 문구 없음, 목록에 없는 이름(잘못 읽은 글자)만 미완료. 기준량·식품유형 경고는 제외
+ *       (labelAllergyService.isAllergyCheckIncomplete)
+ *   - [추가] 요청에 ingredients 를 받아 원재료 이름으로도 알레르기 검사 (예: 유크림 → 우유)
+ *       allergens / allergenAlert = 함유 문구 + 원재료 (중복 제거), 응답에 ingredientAllergens 추가
+ *
+ * ── 이전 변경(OCR 라벨 분석) ────────────────────────────────
  *   - [추가] POST /recommend/label: 사진에서 읽은 100g당 영양성분으로 판정 (Neo4j 조회 없음)
  *       판정은 POST /recommend 와 같은 함수(judgeDiseaseNutrition / judgeHealthyNutrition)를 쓴다
  *       응답은 POST /recommend 형식 + source: "ocr", mayContainAlerts, allergyCheckIncomplete
@@ -71,7 +78,11 @@ const {
   judgeHealthyNutrition,
   getDisplayDailyReference,
 } = require("../services/scoreService");
-const { matchLabelAllergens } = require("../services/labelAllergyService");
+const {
+  matchLabelAllergens,
+  findIngredientAllergens,
+  isAllergyCheckIncomplete,
+} = require("../services/labelAllergyService");
 const { checkAllergens, hasAllergenInfo } = require("../services/allergyService");
 const { findAlternatives } = require("../services/alternativeService");
 
@@ -250,7 +261,8 @@ const LABEL_NUTRITION_KEYS = [
 // ── POST /recommend/label ────────────────────────────────────
 // OCR 로 읽은 라벨 값으로 판정. 알레르기는 등급을 바꾸지 않고 경고로만 보낸다
 router.post("/label", async (req, res) => {
-  const { userId, productName, nutritionPer100g, allergenText, mayContain, ocrWarnings } = req.body;
+  // ocrWarnings 는 예전 요청 형식 호환용으로만 받는다 (미완료 조건에 쓰지 않음)
+  const { userId, productName, nutritionPer100g, allergenText, mayContain, ingredients } = req.body;
 
   if (!userId || !productName) {
     return res.status(400).json({ message: "userId와 productName은 필수입니다." });
@@ -301,11 +313,21 @@ router.post("/label", async (req, res) => {
 
     const labelAllergens = Array.isArray(allergenText) ? allergenText : [];
     const labelMayContain = Array.isArray(mayContain) ? mayContain : [];
-    const foundAllergens = matchLabelAllergens(labelAllergens, allergens);
+    // 함유 문구에서 걸린 것 + 원재료 키워드로 걸린 것 (중복 제거). 판정 등급은 바꾸지 않는다
+    const ingredientAllergens = findIngredientAllergens(
+      Array.isArray(ingredients) ? ingredients : [],
+      allergens,
+    );
+    const foundAllergens = [
+      ...new Set([
+        ...matchLabelAllergens(labelAllergens, allergens),
+        ...ingredientAllergens.map((a) => a.allergen),
+      ]),
+    ];
 
-    // OCR 경고가 있거나 함유 문구가 없으면 "알레르기 없음" 으로 단정할 수 없다
-    const allergyCheckIncomplete =
-      labelAllergens.length === 0 || (Array.isArray(ocrWarnings) && ocrWarnings.length > 0);
+    // 함유 문구가 없거나 잘못 읽은 이름이 있으면 "알레르기 없음" 으로 단정할 수 없다
+    // [변경] ocrWarnings(기준량·식품유형 등)는 더 이상 조건에 쓰지 않는다 (입력 형식 유지용으로만 받음)
+    const allergyCheckIncomplete = isAllergyCheckIncomplete(labelAllergens, labelMayContain);
 
     res.json({
       productName,
@@ -327,6 +349,8 @@ router.post("/label", async (req, res) => {
       // 걸린 성분이 없는데 확인도 끝나지 않았으면 판정 카드의 회색 안내를 띄운다
       allergyUnknown: allergens.length > 0 && foundAllergens.length === 0 && allergyCheckIncomplete,
       mayContainAlerts: matchLabelAllergens(labelMayContain, allergens),
+      // [추가] 원재료로 걸린 알레르기와 그 원재료 (예: [{ allergen: "우유", ingredient: "유크림" }])
+      ingredientAllergens,
       allergyCheckIncomplete,
       dailyReference: getDisplayDailyReference(user.gender, user.age),
     });
