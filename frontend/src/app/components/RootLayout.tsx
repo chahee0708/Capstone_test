@@ -36,7 +36,7 @@ export function RootLayout() {
               <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-blue-500 rounded-lg flex items-center justify-center">
                 <Heart className="w-5 h-5 text-white" />
               </div>
-              <span className="font-semibold text-lg">SafeBite</span>
+              <span className="font-semibold text-lg">Before you Bite</span>
             </Link>
             <nav className="hidden md:flex items-center gap-6">
               {navItems.map((item) => {

@@ -119,7 +119,8 @@ export function ProfilePage() {
   const USER_ID = user?.id ?? 1;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // [추가] 현재 탭: "health"(건강 정보) | "foods"(내 식품). 건강검진표로 입력 버튼은 건강 정보 탭에서만 보인다
-  const [tab, setTab] = useState("health");
+  //         [변경] 처음 열면 내 식품 탭
+  const [tab, setTab] = useState("foods");
 
   const [profile, setProfile] = useState({
     name: "",

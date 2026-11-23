@@ -493,9 +493,10 @@ export function FoodAnalysisPage() {
         <Tabs
           defaultValue="search"
           className="mb-8"
-          // [추가] 사진 분석 결과를 보다가 탭을 바꾸면 결과를 닫는다 → OCR 탭으로 돌아오면 촬영 카드가 다시 보인다
+          // [추가] 사진 분석 결과·읽은 값을 보다가 탭을 바꾸면 닫는다 → OCR 탭으로 돌아오면 촬영 카드가 다시 보인다
           onValueChange={() => {
             if (analysisResult?.source === "ocr") setShowResults(false);
+            setLabelForm(null);
           }}
         >
           {/* 바코드 탭 삭제 → 검색 / OCR 2칸 */}
@@ -560,8 +561,8 @@ export function FoodAnalysisPage() {
           </TabsContent>
 
           <TabsContent value="ocr">
-            {/* [변경] 사진 분석 결과를 보는 동안은 촬영 카드를 숨긴다 (탭을 바꾸면 다시 보인다) */}
-            {!(showResults && analysisResult?.source === "ocr") && (
+            {/* [변경] 읽은 값 확인 중이거나 사진 분석 결과를 보는 동안은 촬영 카드를 숨긴다 (탭을 바꾸면 다시 보인다) */}
+            {!labelForm && !(showResults && analysisResult?.source === "ocr") && (
             <Card className="p-12 text-center">
               <Camera className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-gray-600 mb-4">영양성분표를 촬영하세요</p>

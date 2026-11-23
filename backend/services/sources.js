@@ -53,5 +53,5 @@ module.exports = {
   FOP_THRESHOLD: "UK FoP 2016",
 
   // ── 2형 당뇨: ML(혈당지수 예측) 트랙 ──────────────────────
-  ML_GI: "SafeBite AI 혈당지수 예측 모델",
+  ML_GI: "Before you Bite AI 혈당지수 예측 모델",
 };

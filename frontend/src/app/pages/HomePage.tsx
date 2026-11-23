@@ -45,9 +45,10 @@ export function HomePage() {
               <br />
               스마트 식품 분석 서비스
             </h1>
-            <p className="text-lg text-gray-600 mb-8">
+            {/* [변경] 핸드폰에서도 두 줄로 끊는다 (좁은 화면은 글씨를 한 단계 줄여 첫 줄이 한 줄에 들어가게) */}
+            <p className="text-base sm:text-lg text-gray-600 mb-8 break-keep">
               건강 프로필을 기반으로 식품 성분을 분석하고,
-              <br className="hidden sm:block" />
+              <br />
               3초 만에 적합성을 확인하세요
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">

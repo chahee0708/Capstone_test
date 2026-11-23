@@ -17,7 +17,8 @@ const app = express();
 app.use(
   cors({
     // [변경] CORS_ORIGIN 으로 덮어쓸 수 있게 (기본값은 그대로)
-    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
+    //   쉼표로 여러 개 가능: "http://localhost:5174,http://192.168.0.5:5174" (핸드폰 시연용 PC 주소)
+    origin: (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((o) => o.trim()),
     credentials: true,
   })
 );

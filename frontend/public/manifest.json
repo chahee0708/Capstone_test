@@ -1,6 +1,6 @@
 {
-  "name": "SafeBite - 스마트 식품 분석",
-  "short_name": "SafeBite",
+  "name": "Before you Bite - 스마트 식품 분석",
+  "short_name": "Before you Bite",
   "description": "AI 기반 개인 맞춤 식품 분석 서비스",
   "start_url": "/",
   "display": "standalone",

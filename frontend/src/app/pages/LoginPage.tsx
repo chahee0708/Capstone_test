@@ -40,7 +40,7 @@ export function LoginPage() {
           <div className="w-14 h-14 bg-gradient-to-br from-emerald-500 to-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Heart className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold">SafeBite</h1>
+          <h1 className="text-2xl font-bold">Before you Bite</h1>
           <p className="text-gray-500 mt-1">건강한 식습관의 시작</p>
         </div>
 

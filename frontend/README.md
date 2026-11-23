@@ -1,7 +1,7 @@
 
-  # SafeBite
+  # Before you Bite
 
-  This is a code bundle for SafeBite. The original project is available at https://www.figma.com/design/HUEbgnrbGEqSjTOOKIVomE/SafeBite.
+  This is a code bundle for Before you Bite. The original project is available at https://www.figma.com/design/HUEbgnrbGEqSjTOOKIVomE/SafeBite.
 
   ## Running the code
 
