@@ -20,11 +20,18 @@
  * e-GFR 이 없고 크레아티닌·나이·성별이 있으면 CKD-EPI 2021 식으로 계산한다 (gfrEstimated: true)
  *
  * 값 범위를 벗어난 숫자는 버린다 (예: 키 100~230cm). 못 찾은 값은 null
+ *
+ * 변경:
+ *   - [변경] 질환 추천: 검진표에 "제1형 당뇨병" 이 적혀 있으면 "2형 당뇨" 대신 "1형 당뇨" (2026-11-24)
+ *       예전에는 식전혈당 126 이상이면 무조건 2형으로 추천해 1형 시연 계정도 2형이 됐다
  */
 
 // [추가] Word 편집 기호(¶ 문단 표시)를 켠 채 찍으면 OCR 이 "←", "€", "↵" 로 읽는다
 //        예) "신장←", "체중←" → 이름 칸으로 인식되지 않았다
 const FORMAT_MARKS = /[←→↵↲¶€]/g;
+
+// [추가] 1형 당뇨 진단명: "제1형 당뇨병", "1형당뇨", OCR 오인식 "제 l형 당 뇨" 등 ("2형" 은 걸리지 않는다)
+const TYPE1_DIABETES = /[1lI|１]\s*형\s*당\s*뇨/;
 
 // ── 글자 조각 좌표 ──────────────────────────────────────────
 function toBoxes(fields) {
@@ -246,7 +253,12 @@ function parseCheckup(fields, now = new Date()) {
     suggestedDiseases.push("고혈압");
     hypertensionStage = sbp >= 160 || dbp >= 100 ? 2 : 1;
   }
-  if ((fastingGlucose && fastingGlucose >= 126) || fullText.includes("■ 당뇨병 의심")) {
+  // [변경] 진단명에 "제1형 당뇨(병)" / "1형 당뇨" 가 있으면 2형 대신 1형 (진단여부 칸·소견)
+  //        혈당 수치만으로는 1형·2형을 가릴 수 없어, 예전에는 1형 환자 검진표도 "2형 당뇨" 로 추천했다
+  //        OCR 이 1 을 l·I·| 로 읽거나 띄어 읽어도 ("제 l형 당 뇨") 잡는다. "인슐린 치료" 만으로는 정하지 않는다 (2형도 쓴다)
+  if (TYPE1_DIABETES.test(fullText)) {
+    suggestedDiseases.push("1형 당뇨");
+  } else if ((fastingGlucose && fastingGlucose >= 126) || fullText.includes("■ 당뇨병 의심")) {
     suggestedDiseases.push("2형 당뇨");
   }
   const isLipidAbnormal = (tg && tg >= 150) || (ldl && ldl >= 130) || (hdl && hdl < 40);
