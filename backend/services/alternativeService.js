@@ -17,7 +17,11 @@
  * 등급 필터:
  *   - 후보 등급이 원래 verdict 보다 더 나은 것 (비추천 → 주의·추천 / 주의 → 추천)
  *
- * 이번 변경(대체음식 추천에서 알레르기 미고려):
+ * 이번 변경(ML 입력 식이섬유·인·칼륨):
+ *   - [변경] 후보 조회에 fiber·dietary_fiber·potassium·phosphorus·unified_mid 추가,
+ *       재판정 전에 빈 값을 중분류 평균으로 채운다 (mlFeatures.fillMlFeatures, 원래 음식과 같은 방식)
+ *
+ * 이전 변경(대체음식 추천에서 알레르기 미고려):
  *   - [삭제] 사용자 알레르기(이름 또는 그룹)와 겹치는 후보 제외 조건
  *   - [삭제] 사용자 알레르기가 있을 때 알레르기 정보가 없는 후보 제외 조건
  *     (밀 알레르기 사용자는 만두처럼 후보 전부가 밀을 포함하는 경우 대체음식이 0개가 되던 문제)
@@ -37,6 +41,7 @@
 const { SIM_THRESHOLD, MAX_ALTERNATIVES } = require("../config/alternatives");
 const { similarity, sharedIngredients } = require("./similarity");
 const { toNutrition } = require("./foodService");
+const { fillMlFeatures } = require("./mlFeatures"); // [추가] 후보도 원래 음식과 같은 ML 입력 (식이섬유·인·칼륨)
 const { judgeDiseaseNutrition, judgeHealthyNutrition } = require("./scoreService");
 
 // 등급 순서: 추천 > 주의 > 비추천
@@ -79,7 +84,8 @@ const CANDIDATE_QUERY = `
   WITH c, collect(i.name) AS ingredients
   RETURN c.name AS name, c.report_no AS reportNo, ingredients,
          c { .sugar, .sodium, .saturated_fat, .protein, .calories,
-             .carbohydrate, .fat, .trans_fat, .cholesterol } AS props`;
+             .carbohydrate, .fat, .trans_fat, .cholesterol,
+             .fiber, .dietary_fiber, .potassium, .phosphorus, .unified_mid } AS props`;
 
 /**
  * 원래 음식에서 문제가 된 영양소 1개 고르기
@@ -177,7 +183,8 @@ async function findAlternatives(session, originalFood, user, originalResult) {
     const judged = [];
     for (const c of group) {
       try {
-        const nutrition = toNutrition(c.props);
+        // [변경] 식이섬유·인·칼륨 빈 값은 중분류 평균으로 (원래 음식과 같은 방식, 2형 당뇨 ML 입력용)
+        const nutrition = await fillMlFeatures(toNutrition(c.props), c.props.unified_mid ?? null);
         const result = await judge(nutrition, user);
         if (result && passes(result.verdict)) judged.push({ ...c, nutrition, verdict: result.verdict });
       } catch (err) {

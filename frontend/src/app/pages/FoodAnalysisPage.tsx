@@ -13,7 +13,15 @@
  *      - 1페이지: 영양소 균형 (NutrientRadarChart)
  *      - 2페이지: 영양성분 분석 (NutritionBreakdownList)
  *
- * ── 이번 변경(seohee 브랜치 기능 이식) ─────────────────────────
+ * ── 이번 변경(시연 점검) ─────────────────────────────────────
+ *   - [추가] 프로필의 나이·몸무게·키가 비어 분석할 수 없으면 (백엔드 code: PROFILE_INCOMPLETE)
+ *       오류 상자에 "프로필 입력하기" 링크 → 프로필 건강 정보 탭 (showError, needsProfile)
+ *   - [변경] 자동완성: 검색어를 치고 0.3초 안에 Enter 를 누르면 분석 뒤에 후보 목록이 다시 열려
+ *       결과 위에 남던 문제 수정. 목록을 닫을 때(분석·후보 선택·대체음식·입력칸 벗어남)
+ *       기다리던 요청을 무효로 하고(suggestSeq), 늦게 온 응답은 버린다 (closeSuggestions)
+ *   - [추가] location.state.tab === "ocr" 로 들어오면 OCR 탭부터 (홈 화면 "영양성분표 촬영" 카드)
+ *
+ * ── 이전 변경(seohee 브랜치 기능 이식) ─────────────────────────
  *   - [추가] 판정 카드에 카테고리 그림(응답 category → categoryIcons.ts)과 관심 식품 하트 버튼
  *       하트: POST/DELETE /me/favorites. 사진 결과는 labelInput 을 같이 저장 → 프로필에서 다시 분석
  *   - [추가] 원재료 카드 (IngredientsCard, 결과 맨 아래 식품 라벨 모양): 응답 ingredients 의 설명을 말풍선으로
@@ -66,7 +74,7 @@
  *   - frontend/src/components/NutritionSlideCard.tsx (안에서 NutrientRadarChart, NutritionBreakdownList 사용)
  */
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { Search, Camera, AlertCircle, Heart } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -230,6 +238,13 @@ export function FoodAnalysisPage() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState("");
+  // [추가] 프로필(나이·몸무게·키)이 비어 분석하지 못한 경우 → 오류 상자에 "프로필 입력하기" 링크
+  const [needsProfile, setNeedsProfile] = useState(false);
+  /** [추가] 오류 표시. 백엔드 응답의 code 가 PROFILE_INCOMPLETE 면 링크도 같이 */
+  const showError = (message: string, code?: string) => {
+    setErrorMessage(message);
+    setNeedsProfile(code === "PROFILE_INCOMPLETE");
+  };
 
   // ── [추가] 관심 식품: "db:이름" / "label:이름" 키 모음 (하트 채움 여부) ──
   const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
@@ -243,6 +258,11 @@ export function FoodAnalysisPage() {
   // ── [추가] 프로필 "내 식품" 에서 누르고 들어온 경우: 바로 분석 ──
   const location = useLocation();
   const navigate = useNavigate();
+  // [추가] 처음 보일 탭: 홈 화면 "영양성분표 촬영" 카드로 들어오면(state.tab = "ocr") OCR 탭, 아니면 검색 탭
+  //        아래 effect 가 state 를 비우기 전에 첫 화면에서 한 번만 읽는다
+  const [initialTab] = useState(() =>
+    (location.state as { tab?: string } | null)?.tab === "ocr" ? "ocr" : "search",
+  );
   useEffect(() => {
     const state = location.state as { query?: string; label?: LabelInput } | null;
     if (!state) return;
@@ -262,33 +282,45 @@ export function FoodAnalysisPage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   // 글자를 칠 때마다 요청하지 않도록 0.3초 기다리는 타이머
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // [추가] 후보 요청 번호. 목록을 닫으면 번호가 바뀌어, 그 전에 보낸 요청의 응답은 버린다
+  const suggestSeq = useRef(0);
+
+  /** [추가] 후보 목록 닫기: 기다리던 타이머·요청까지 무효로 (늦게 온 응답이 목록을 다시 열지 않게) */
+  const closeSuggestions = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    suggestSeq.current++;
+    setSuggestions([]);
+  };
 
   /** 입력칸 글자가 바뀔 때: 0.3초 뒤 후보 목록 요청 */
   const handleQueryChange = (value: string) => {
     setSearchQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!value.trim()) {
-      setSuggestions([]);
+      closeSuggestions();
       return;
     }
+    const seq = ++suggestSeq.current;
     debounceRef.current = setTimeout(async () => {
+      let list: string[] = [];
       try {
         const res = await fetch(
           `${API_URL}/recommend/search?q=${encodeURIComponent(value.trim())}`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         );
-        setSuggestions(res.ok ? await res.json() : []);
+        list = res.ok ? await res.json() : [];
       } catch {
-        setSuggestions([]);
+        list = [];
       }
+      // [추가] 그 사이 목록을 닫았거나(분석 시작 등) 더 새 요청이 있으면 이 응답은 버린다
+      if (seq === suggestSeq.current) setSuggestions(list);
     }, 300);
   };
 
   /** 후보를 클릭했을 때: 입력칸에만 채우고 목록 닫기 (분석은 직접 누름) */
   const handleSelectSuggestion = (name: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    closeSuggestions();
     setSearchQuery(name);
-    setSuggestions([]);
   };
   /**
    * 분석 버튼 클릭 또는 Enter 입력 시 실행
@@ -299,8 +331,8 @@ export function FoodAnalysisPage() {
     if (!name) return;
     setIsAnalyzing(true);
     setShowResults(false);
-    setErrorMessage("");
-    setSuggestions([]); // 분석 시작하면 후보 목록 닫기
+    showError("");
+    closeSuggestions(); // 분석 시작하면 후보 목록 닫기 ([변경] 기다리던 후보 요청도 무효)
 
     try {
       const response = await fetch(`${API_URL}/recommend`, {
@@ -314,7 +346,7 @@ export function FoodAnalysisPage() {
 
       if (!response.ok) {
         const err = await response.json();
-        setErrorMessage(err.message || "음식을 찾을 수 없습니다.");
+        showError(err.message || "음식을 찾을 수 없습니다.", err.code);
         return;
       }
 
@@ -335,7 +367,7 @@ export function FoodAnalysisPage() {
    * (입력칸에 이름을 채우고 분석 → 화면 맨 위로 이동)
    */
   const handleSelectAlternative = (name: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    closeSuggestions();
     setSearchQuery(name);
     window.scrollTo({ top: 0, behavior: "smooth" });
     handleAnalyze(name);
@@ -347,7 +379,7 @@ export function FoodAnalysisPage() {
     setIsReadingLabel(true);
     setLabelForm(null);
     setShowResults(false);
-    setErrorMessage("");
+    showError("");
 
     try {
       const formData = new FormData();
@@ -425,7 +457,7 @@ export function FoodAnalysisPage() {
   const runLabelAnalysis = async (input: LabelInput) => {
     setIsAnalyzing(true);
     setShowResults(false);
-    setErrorMessage("");
+    showError("");
 
     try {
       const response = await fetch(`${API_URL}/recommend/label`, {
@@ -438,7 +470,7 @@ export function FoodAnalysisPage() {
       });
       const data = await response.json();
       if (!response.ok) {
-        setErrorMessage(data.message || "분석에 실패했습니다.");
+        showError(data.message || "분석에 실패했습니다.", data.code);
         return;
       }
       setAnalysisResult(data);
@@ -491,7 +523,7 @@ export function FoodAnalysisPage() {
         </div>
 
         <Tabs
-          defaultValue="search"
+          defaultValue={initialTab}
           className="mb-8"
           // [추가] 사진 분석 결과·읽은 값을 보다가 탭을 바꾸면 닫는다 → OCR 탭으로 돌아오면 촬영 카드가 다시 보인다
           onValueChange={() => {
@@ -520,7 +552,7 @@ export function FoodAnalysisPage() {
                     value={searchQuery}
                     onChange={(e) => handleQueryChange(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && handleAnalyze()}
-                    onBlur={() => setSuggestions([])}
+                    onBlur={closeSuggestions}
                   />
                   {/* 자동완성 후보 목록 */}
                   {suggestions.length > 0 && (
@@ -553,8 +585,14 @@ export function FoodAnalysisPage() {
               </div>
               {errorMessage && (
                 <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4" />
-                  {errorMessage}
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="flex-1">{errorMessage}</span>
+                  {/* [추가] 프로필이 비어 분석하지 못한 경우 */}
+                  {needsProfile && (
+                    <Link to="/profile" state={{ tab: "health" }} className="shrink-0 font-semibold underline">
+                      프로필 입력하기
+                    </Link>
+                  )}
                 </div>
               )}
             </Card>
@@ -709,8 +747,14 @@ export function FoodAnalysisPage() {
 
             {errorMessage && (
               <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                {errorMessage}
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="flex-1">{errorMessage}</span>
+                {/* [추가] 프로필이 비어 분석하지 못한 경우 */}
+                {needsProfile && (
+                  <Link to="/profile" state={{ tab: "health" }} className="shrink-0 font-semibold underline">
+                    프로필 입력하기
+                  </Link>
+                )}
               </div>
             )}
           </TabsContent>

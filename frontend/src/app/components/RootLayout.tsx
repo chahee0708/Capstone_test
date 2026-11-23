@@ -5,6 +5,11 @@
  *       로그인하지 않았으면 /login 으로 보낸다.
  *
  * 이번에 바뀐 점:
+ *   - [추가] 휴대폰 화면 헤더 오른쪽에 로그인한 이름 + 로그아웃 버튼
+ *       위쪽 메뉴(로그아웃 포함)는 넓은 화면(md 이상)에서만 보여서 휴대폰에서는 로그아웃할 방법이 없었다
+ *       → 시연 때 질환별 계정을 바꿔 가며 쓸 수 없던 문제. 이름은 지금 어느 계정인지 확인용
+ *
+ * 이전 변경:
  *   - 바코드 기능 삭제에 맞춰 "분석" 메뉴 아이콘을 바코드(ScanBarcode) → 검색(Search) 으로 변경
  *
  * 쓰이는 곳: routes.ts 에서 "/" 아래 모든 페이지(홈·분석·프로필)를 감싼다
@@ -65,6 +70,18 @@ export function RootLayout() {
                 <span className="text-sm">로그아웃</span>
               </button>
             </nav>
+            {/* [추가] 휴대폰 화면: 로그인한 이름 + 로그아웃 (위 메뉴는 md 이상에서만 보인다) */}
+            <div className="md:hidden flex items-center gap-1 min-w-0">
+              <span className="text-sm text-gray-500 truncate max-w-[7rem]">{user.name}</span>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center gap-1 shrink-0 px-2 py-2 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="text-sm">로그아웃</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>

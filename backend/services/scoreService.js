@@ -18,7 +18,28 @@
  *
  * 여러 질병 동시 보유 시: 각 질병별 독립 판정 후 가장 보수적 판정 채택
  *
- * ── 이번 변경(STEP 1 / STEP 5) 요약 ──────────────────────────
+ * ── 이번 변경(2형 당뇨 + 다른 질환) ───────────────────────────
+ *   - [변경] judgeDiseaseNutrition: 2형 당뇨가 있으면 ML 판정만 하고 바로 끝나서 함께 고른 다른 질환을
+ *       보지 않던 문제 수정 (예: "2형 당뇨 + 고혈압" 사용자에게 나트륨 1492mg 신라면이 "추천")
+ *       → ML 판정과 다른 질환 규칙 판정을 모두 하고 가장 보수적인 판정을 쓴다. 근거(reasons)도 합친다
+ *   - 2형 당뇨만 있는 사용자는 응답이 예전과 똑같다 (diseaseTrack "diabetes", 방사형 축 전부 KDRI)
+ *   - 다른 질환이 함께 있으면 diseaseTrack 은 "rule" (방사형 축에 그 질환 한도가 들어가므로
+ *     프론트의 "이 그래프는 일반 권장량 기준" 안내를 띄우지 않는다), giCategory 는 그대로 보낸다
+ *
+ * ── 이번 변경(ML 입력 식이섬유·인·칼륨) ────────────────────────
+ *   - [변경] callMLService: fiber/phosphorus/potassium 을 0 대신 nutrition 의 값으로 보낸다
+ *       값은 services/mlFeatures.js 가 채운다 (식품 값 → 없으면 통합 중분류 평균 → 전체 평균)
+ *       규칙 판정(나트륨·당류·단백질 등)은 그대로. 2형 당뇨 판정(ML)만 바뀐다
+ *
+ * ── 이전 변경(시연 점검) ─────────────────────────────────────
+ *   - [변경] 이상지질혈증: HDL 을 입력하지 않았으면(null) "HDL 40 미만" 으로 보지 않는다
+ *       (예전에는 null < 40 이 참이라 입력하지 않은 HDL 을 근거로 탄수화물 판정이 붙었다)
+ *   - [변경] callMLService: 응답 확인을 단단하게
+ *       예전에는 ML 응답이 JSON 이 아니면 'end' 처리 안에서 예외가 나 백엔드 프로세스 전체가 죽었고,
+ *       오류 응답(422 등)이면 gi_category 가 없어 조용히 "추천" 이 됐다. 응답이 없으면 끝없이 기다렸다
+ *       → 상태코드·JSON·gi_category 를 확인해 문제가 있으면 오류로 돌려준다 (분석 응답은 "서버 오류"), 10초 제한
+ *
+ * ── 이전 변경(STEP 1 / STEP 5) 요약 ──────────────────────────
  * STEP 1 (판정 로직 변경 없음, 응답 데이터만 추가):
  *   - radar   : 방사형 그래프용 6축 데이터 (탄수화물/당류/나트륨/지방/포화지방/단백질)
  *   - reasons : "주의"/"비추천" 영양소의 판정 근거 (프론트에서 줄글로 출력)
@@ -393,10 +414,12 @@ function callMLService(nutrition) {
       protein: nutrition.protein,
       fats: nutrition.fat,
       carbs: nutrition.carbohydrate,
-      fiber: 0, // TODO: Neo4j 스키마 확장 후 교체
+      // [변경] 예전에는 셋 다 항상 0. 식품 값 → 없으면 중분류 평균 (services/mlFeatures.js 가 미리 채운다)
+      //        채우지 않은 값이 들어오면(호출하는 쪽에서 빠뜨림) 예전처럼 0
+      fiber: nutrition.fiber ?? 0,
       sugar: nutrition.sugar,
-      phosphorus: 0, // TODO: Neo4j 스키마 확장 후 교체
-      potassium: 0, // TODO: Neo4j 스키마 확장 후 교체
+      phosphorus: nutrition.phosphorus ?? 0,
+      potassium: nutrition.potassium ?? 0,
       sodium: nutrition.sodium,
       saturated_fat: nutrition.saturatedFat,
       trans_fat: nutrition.transFat,
@@ -419,10 +442,24 @@ function callMLService(nutrition) {
         data += chunk;
       });
       res.on("end", () => {
-        resolve(JSON.parse(data));
+        // [변경] 여기서 예외가 나면 프로세스가 죽는다 → 확인 후 reject 로 돌려준다
+        let parsed;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          reject(new Error(`ML 서비스 응답을 읽지 못했습니다 (HTTP ${res.statusCode})`));
+          return;
+        }
+        if (res.statusCode !== 200 || !["Low", "Medium", "High"].includes(parsed?.gi_category)) {
+          reject(new Error(`ML 서비스 오류 (HTTP ${res.statusCode}): ${data.slice(0, 200)}`));
+          return;
+        }
+        resolve(parsed);
       });
     });
 
+    // [추가] 응답이 없으면 10초 뒤 포기 (분석 화면이 끝없이 "분석 중..." 이 되지 않게)
+    req.setTimeout(10000, () => req.destroy(new Error("ML 서비스 응답 시간 초과")));
     req.on("error", reject);
     req.write(body);
     req.end();
@@ -489,7 +526,8 @@ function evaluateDyslipidemia(nutrition, energy, ldlValue, tgValue, hdlValue) {
     tgValue >= 150 ? 1 : 0;
 
   // HDL: 0=정상(≥40), 1=낮음(<40)
-  const hdlLow = hdlValue < 40 ? 1 : 0;
+  // [변경] 입력하지 않은 값(null)은 낮음으로 보지 않는다 (JS 에서 null < 40 은 참)
+  const hdlLow = hdlValue != null && hdlValue < 40 ? 1 : 0;
 
   const nutrients = [];
 
@@ -834,6 +872,8 @@ async function judgeDiseaseNutrition(
   const kdri = getDailyReference(gender, age);
 
   // ── 트랙 1: 2형 당뇨 → ML 기반 판정 ────────────────────────
+  // [변경] 여기서 바로 끝내지 않는다. 다른 질환이 함께 있으면 아래 규칙 판정과 합친다
+  let ml = null; // { giCategory, verdict, reasons }
   if (diseases.includes("2형 당뇨")) {
     const mlResult = await callMLService(nutrition);
     const giCategory = mlResult.gi_category; // "Low" | "Medium" | "High"
@@ -842,9 +882,6 @@ async function judgeDiseaseNutrition(
     if (giCategory === "High") verdict = "비추천";
     else if (giCategory === "Medium") verdict = "주의";
     else verdict = "추천";
-
-    // ML 트랙은 영양소 한도를 쓰지 않으므로 방사형 축은 전부 KDRI 기준이다
-    const radar = buildRadar(nutrition, [], kdri, kdri.에너지);
 
     // 판정이 "주의"/"비추천"일 때만 근거를 남긴다 (규칙 트랙과 동일한 원칙)
     const reasons =
@@ -860,17 +897,7 @@ async function judgeDiseaseNutrition(
             },
           ];
 
-    return {
-      diseaseTrack: "diabetes",
-      verdict,
-      giCategory,
-      warnings: [],
-      reasons,
-      radar,
-      carbInfo: null, // 1형 당뇨 전용 필드 (2형 트랙에서는 항상 null)
-      nutrition,
-      bmi: bmi.toFixed(1),
-    };
+    ml = { giCategory, verdict, reasons };
   }
 
   // ── 트랙 2: 규칙 기반 질병들 ─────────────────────────────────
@@ -879,6 +906,7 @@ async function judgeDiseaseNutrition(
   const allReasons = []; // 판정 근거 줄글용 (질병별 결과를 모두 합침)
   const allLimits = []; // 방사형 그래프 축 기준용
   let worstRank = 0;
+  let ruleCount = 0; // [추가] 규칙으로 판정한 질병 수 (2형 당뇨만 있는지 구분용)
 
   for (const disease of diseases) {
     let result = null;
@@ -904,6 +932,7 @@ async function judgeDiseaseNutrition(
     // 갑상선: 완전 제외 (요오드 데이터 없음)
 
     if (result) {
+      ruleCount++;
       allWarnings.push(...result.warnings);
       allReasons.push(...result.reasons);
       allLimits.push(...result.limits);
@@ -918,6 +947,29 @@ async function judgeDiseaseNutrition(
         ],
       );
     }
+  }
+
+  // [변경] 2형 당뇨만 있으면 (규칙으로 판정한 질병 없음) 예전 ML 트랙 응답 그대로
+  if (ml && ruleCount === 0) {
+    return {
+      diseaseTrack: "diabetes",
+      verdict: ml.verdict,
+      giCategory: ml.giCategory,
+      warnings: [],
+      reasons: ml.reasons,
+      // ML 트랙은 영양소 한도를 쓰지 않으므로 방사형 축은 전부 KDRI 기준이다
+      radar: buildRadar(nutrition, [], kdri, kdri.에너지),
+      carbInfo: null, // 1형 당뇨 전용 필드 (2형 트랙에서는 항상 null)
+      nutrition,
+      bmi: bmi.toFixed(1),
+    };
+  }
+
+  // [추가] 2형 당뇨 + 다른 질환: ML 판정도 가장 보수적 판정에 넣고, 근거는 ML 을 맨 앞에
+  if (ml) {
+    const mlRank = ml.verdict === "비추천" ? 2 : ml.verdict === "주의" ? 1 : 0;
+    worstRank = Math.max(worstRank, mlRank);
+    allReasons.unshift(...ml.reasons);
   }
 
   const verdict =
@@ -936,7 +988,7 @@ async function judgeDiseaseNutrition(
   return {
     diseaseTrack: "rule",
     verdict,
-    giCategory: null,
+    giCategory: ml ? ml.giCategory : null, // [변경] 2형 당뇨가 함께 있으면 GI 등급도 보낸다 (판정 카드의 GI 한 줄)
     warnings: allWarnings,
     reasons: allReasons,
     radar: buildRadar(nutrition, allLimits, kdri, kdri.에너지),

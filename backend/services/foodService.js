@@ -4,7 +4,13 @@
  * 역할: Neo4j 에서 음식 영양소, 질환별 제한 영양소를 읽어 오는 서비스
  * 주요 함수: getFoodNutrition, getLimitNutrients, toNutrition
  *
- * 이번에 바뀐 점:
+ * 이번에 바뀐 점(ML 입력 식이섬유·인·칼륨):
+ *   - [추가] toNutrition 에 fiber(Food.fiber 또는 dietary_fiber), potassium, phosphorus 추가.
+ *       값이 없으면 0 이 아니라 null (→ mlFeatures.fillMlFeatures 가 중분류 평균으로 채운다)
+ *   - [변경] getFoodNutrition: 세 값과 unified_mid 도 읽고, 빈 값은 중분류 평균으로 채워서 돌려준다
+ *       판정 규칙(나트륨·당류 등)에는 쓰지 않고 2형 당뇨 ML 입력에만 쓴다
+ *
+ * 이전 변경:
  *   - Food 노드 속성 → 판정용 nutrition 객체 변환을 toNutrition 으로 분리해 export
  *     (대체음식 후보는 이름으로 다시 조회하지 않고 이미 읽어 온 속성으로 판정하기 때문)
  *     getFoodNutrition 의 변환 결과는 이전과 완전히 같다.
@@ -12,11 +18,21 @@
  * 호출: backend/services/scoreService.js, backend/services/alternativeService.js
  */
 
+const { fillMlFeatures } = require("./mlFeatures"); // [추가] 식이섬유·인·칼륨 빈 값 → 중분류 평균
+
 //Neo4j에서 숫자값 안전하게 변환하는 함수
 function toNum(val) {
   if (val === null || val === undefined) return 0;
   if (typeof val === "object" && val.low !== undefined) return val.low;
   return parseFloat(val) || 0;
+}
+
+// [추가] 없는 값은 null 로 둔다 (0 과 "없음" 을 구분해야 평균으로 채울 수 있다)
+function toNumOrNull(val) {
+  if (val === null || val === undefined || val === "") return null;
+  if (typeof val === "object" && val.low !== undefined) return val.low;
+  const n = parseFloat(val);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -34,10 +50,15 @@ function toNutrition(props) {
     fat:          toNum(props.fat),
     transFat:     toNum(props.trans_fat),
     cholesterol:  toNum(props.cholesterol),
+    // [추가] 2형 당뇨 ML 입력용. 없으면 null → fillMlFeatures 가 중분류 평균으로 채운다
+    fiber:        toNumOrNull(props.fiber ?? props.dietary_fiber),
+    potassium:    toNumOrNull(props.potassium),
+    phosphorus:   toNumOrNull(props.phosphorus),
   };
 }
 
 // Neo4j에서 음식 영양소 조회
+// [변경] 식이섬유·인·칼륨과 통합 중분류도 읽고, 빈 값은 중분류 평균으로 채운다
 async function getFoodNutrition(session, foodName) {
   const result = await session.run(
     `MATCH (f:Food {name: $foodName})
@@ -45,14 +66,18 @@ async function getFoodNutrition(session, foodName) {
             f.saturated_fat AS saturated_fat, f.protein AS protein,
             f.calories AS calories, f.carbohydrate AS carbohydrate,
             f.fat AS fat, f.trans_fat AS trans_fat,
-            f.cholesterol AS cholesterol`,
+            f.cholesterol AS cholesterol,
+            f.fiber AS fiber, f.dietary_fiber AS dietary_fiber,
+            f.potassium AS potassium, f.phosphorus AS phosphorus,
+            f.unified_mid AS unified_mid`,
     { foodName }
   );
 
   if (result.records.length === 0) return null;
 
   // 각 영양소 값을 숫자로 변환해서 객체로 변환
-  return toNutrition(result.records[0].toObject());
+  const props = result.records[0].toObject();
+  return fillMlFeatures(toNutrition(props), props.unified_mid ?? null);
 }
 
 // Neo4j에서 질환별 제한 영양소 조회

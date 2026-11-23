@@ -4,6 +4,11 @@
  * 역할: 로그인 후 첫 화면. 서비스 소개(히어로) + 분석 방법 소개 카드.
  *
  * 이번에 바뀐 점:
+ *   - [변경] 분석 방법 소개 카드를 누르면 분석 화면의 해당 탭으로 이동
+ *       "제품명 검색" → /analysis 검색 탭, "영양성분표 촬영" → /analysis OCR 탭 (location.state.tab)
+ *       예전에는 누를 수 있는 모양(손가락 커서·떠오르는 그림자)인데 아무 일도 일어나지 않았다
+ *
+ * 이전 변경:
  *   - 바코드 기능 삭제: "바코드 스캔" 소개 카드 제거, 시작 버튼 아이콘을 바코드 → 검색 아이콘으로 변경
  *   - 소개 카드가 2개가 되어 큰 화면에서 3칸 중 1칸이 비지 않도록 2칸 그리드 + 가운데 정렬로 변경
  *
@@ -21,12 +26,14 @@ export function HomePage() {
       title: "제품명 검색",
       description: "식품명으로 빠르게 찾기",
       color: "from-blue-500 to-cyan-500",
+      tab: "search", // [추가] 누르면 분석 화면의 이 탭으로
     },
     {
       icon: Camera,
       title: "영양성분표 촬영",
       description: "OCR로 자동 정보 인식",
       color: "from-purple-500 to-pink-500",
+      tab: "ocr",
     },
   ];
 
@@ -84,18 +91,18 @@ export function HomePage() {
             {features.map((feature, index) => {
               const Icon = feature.icon;
               return (
-                <Card
-                  key={index}
-                  className="p-6 hover:shadow-lg transition-shadow cursor-pointer group"
-                >
-                  <div
-                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}
-                  >
-                    <Icon className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="font-semibold mb-2">{feature.title}</h3>
-                  <p className="text-sm text-gray-600">{feature.description}</p>
-                </Card>
+                // [변경] 카드 전체가 링크: 분석 화면의 해당 탭으로
+                <Link key={index} to="/analysis" state={{ tab: feature.tab }} className="block group">
+                  <Card className="p-6 h-full hover:shadow-lg transition-shadow">
+                    <div
+                      className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}
+                    >
+                      <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h3 className="font-semibold mb-2">{feature.title}</h3>
+                    <p className="text-sm text-gray-600">{feature.description}</p>
+                  </Card>
+                </Link>
               );
             })}
           </div>

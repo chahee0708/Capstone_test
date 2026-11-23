@@ -10,6 +10,8 @@ const ocrRouter = require("./routes/ocr");
 const authMiddleware = require("./middleware/auth");
 // [추가] 관심 식품 / 최근 검색 (프로필 "내 식품" 탭)
 const { router: myFoodsRouter, ensureMyFoodTables } = require("./routes/myFoods");
+// [추가] 2형 당뇨 ML 입력(식이섬유·인·칼륨) 중분류 평균을 미리 계산 (실패하면 첫 분석 때 다시)
+const { loadAverages } = require("./services/mlFeatures");
 
 const app = express();
 
@@ -41,4 +43,12 @@ app.listen(4000, () => {
   ensureMyFoodTables()
     .then(() => console.log("[내 식품] 테이블 확인 완료"))
     .catch((err) => console.error("[내 식품] 테이블 만들기 실패:", err.message));
+  // [추가] 컨테이너가 함께 켜질 때는 Neo4j 가 늦게 준비된다 → 5초마다 최대 12번 다시 시도
+  //        끝내 실패해도 첫 분석 때 다시 계산하므로 로그만 남긴다
+  const preloadAverages = (triesLeft) =>
+    loadAverages().catch((err) => {
+      if (triesLeft > 1) setTimeout(() => preloadAverages(triesLeft - 1), 5000);
+      else console.error("[ML 입력] 평균 미리 계산 실패 (첫 분석 때 다시):", err.message);
+    });
+  preloadAverages(12);
 });

@@ -9,7 +9,14 @@
  *     - 신장병 → GFR 수치 숫자 입력
  *   - 건강검진표 사진 기반 OCR 자동 채우기 기능 연동 (credentials: "include" 적용)
  *
- * 이번 변경(seohee 브랜치 기능 이식):
+ * 이번 변경(시연 점검):
+ *   - [추가] 나이·몸무게·키가 비어 있으면 "건강 정보" 탭으로 열고 안내 문구를 보인다
+ *       (새로 가입한 계정, 분석 화면의 "프로필 입력하기" 링크로 들어온 경우)
+ *       location.state.tab === "health" 로 들어와도 건강 정보 탭으로 연다 (회원가입 직후)
+ *   - [추가] 저장할 때 나이·몸무게·키가 비었으면 저장하지 않고 알린다
+ *       (백엔드가 이 셋이 없으면 판정하지 않는다: routes/recommend.js PROFILE_INCOMPLETE)
+ *
+ * 이전 변경(seohee 브랜치 기능 이식):
  *   - [추가] "건강 정보" / "내 식품" 탭. 내 식품 = 관심 식품 + 최근 검색한 식품 (MyFoodsPanel)
  *       "건강검진표로 입력"(건강검진표 OCR) 버튼은 건강 정보 탭에서만 보인다
  *   - [변경] 기본 정보·지질 수치·GFR 숫자 칸: 밑줄 칸 + 떠오르는 이름표 (FloatingField, seohee 브랜치 형식), 단위는 칸 오른쪽 끝
@@ -21,6 +28,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
 import {
   User,
@@ -119,8 +127,11 @@ export function ProfilePage() {
   const USER_ID = user?.id ?? 1;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // [추가] 현재 탭: "health"(건강 정보) | "foods"(내 식품). 건강검진표로 입력 버튼은 건강 정보 탭에서만 보인다
-  //         [변경] 처음 열면 내 식품 탭
-  const [tab, setTab] = useState("foods");
+  //         [변경] 처음 열면 내 식품 탭. [추가] 회원가입·분석 화면 링크로 들어오면(state.tab) 건강 정보 탭
+  const location = useLocation();
+  const [tab, setTab] = useState(
+    (location.state as { tab?: string } | null)?.tab === "health" ? "health" : "foods",
+  );
 
   const [profile, setProfile] = useState({
     name: "",
@@ -141,6 +152,8 @@ export function ProfilePage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  // [추가] 판정에 꼭 필요한 기본 정보(나이·몸무게·키)가 채워졌는지
+  const basicFilled = profile.age > 0 && profile.weight > 0 && profile.height > 0;
 
   // ── 백엔드에서 사용자 정보 불러오기 ──────────────────────────
   useEffect(() => {
@@ -164,6 +177,8 @@ export function ProfilePage() {
           hdl_value: data.hdl_value ?? null,
           gfr_value: data.gfr_value ?? 35,
         });
+        // [추가] 판정에 필요한 기본 정보가 비었으면 건강 정보 탭부터
+        if (!(data.age > 0 && data.weight > 0 && data.height > 0)) setTab("health");
         setIsLoading(false);
       })
       .catch(() => {
@@ -240,6 +255,13 @@ export function ProfilePage() {
 
   // ── 저장 ─────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
+    // [추가] 나이·몸무게·키는 판정에 꼭 필요하다 (비어 있으면 분석이 되지 않는다)
+    if (!basicFilled) {
+      toast.error("나이·몸무게·키를 입력해 주세요", {
+        description: "맞춤 분석에 꼭 필요한 정보예요",
+      });
+      return;
+    }
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
@@ -340,6 +362,12 @@ export function ProfilePage() {
             <h3 className="font-semibold mb-4 flex items-center gap-2">
               <User className="w-5 h-5 text-emerald-600" /> 기본 정보
             </h3>
+            {/* [추가] 나이·몸무게·키가 비었으면 안내 (새로 가입한 계정) */}
+            {!basicFilled && (
+              <p className="text-sm text-amber-700 -mt-2 mb-2">
+                나이·몸무게·키를 입력하고 저장해야 식품을 분석할 수 있어요.
+              </p>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
               {(
                 [

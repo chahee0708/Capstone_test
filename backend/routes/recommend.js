@@ -17,7 +17,16 @@
  * 호출: index.js 에서 app.use("/recommend", authMiddleware, recommendRouter)
  *       → 프론트 분석 페이지가 POST /recommend, 자동완성이 GET /recommend/search 호출
  *
- * ── 이번 변경(seohee 브랜치 기능 이식) ─────────────────────────
+ * ── 이번 변경(시연 점검) ─────────────────────────────────────
+ *   - [추가] 프로필의 나이·몸무게·키가 비어 있으면(0 또는 없음) 판정하지 않고
+ *       400 { code: "PROFILE_INCOMPLETE", message } 를 보낸다 (POST /recommend, POST /recommend/label)
+ *       예전에는 새로 가입한 계정이 0세(6~8세 기준)·몸무게 0(신장병 단백질 한도 0)으로 판정됐다
+ *       프론트 분석 화면은 이 code 를 보면 "프로필 입력하기" 링크를 띄운다
+ *   - [변경] GET /recommend/search: 같은 이름의 식품이 여러 개면 후보 목록에 한 번만 (DISTINCT)
+ *   - [변경] POST /recommend/label: 라벨에 없는 식이섬유·인·칼륨(2형 당뇨 ML 입력)을 통합 중분류 평균으로 채운다
+ *       (services/mlFeatures.js). 중분류를 판정 전에 정하도록 순서만 옮겼다. labelInput 에는 라벨 값 9개만 저장
+ *
+ * ── 이전 변경(seohee 브랜치 기능 이식) ─────────────────────────
  *   - [추가] 두 응답 모두 ingredients(원재료 + 설명, ingredientInfoService.withInfo) 와
  *       category(통합 중분류 → 프론트 카테고리 그림) 를 보낸다
  *       POST /recommend: Food.unified_mid / POST /recommend/label: 식품유형 + 제품명 (labelCategory)
@@ -98,6 +107,17 @@ const { withInfo } = require("../services/ingredientInfoService"); // [추가] �
 const { labelCategory } = require("../services/labelCategory"); // [추가] 사진 결과의 중분류
 const { mergeBrokenIngredients } = require("../services/labelParser"); // [추가] 잘못 나뉜 원재료 다시 합치기
 const { recordRecentSearch } = require("./myFoods"); // [추가] 최근 검색 기록
+const { fillMlFeatures } = require("../services/mlFeatures"); // [추가] 라벨에 없는 식이섬유·인·칼륨 → 중분류 평균
+
+// [추가] 판정에 필요한 프로필(나이·몸무게·키)이 비었으면 보낼 응답. 채워져 있으면 null
+function profileIncomplete(user) {
+  const filled = (v) => Number(v) > 0;
+  if (filled(user.age) && filled(user.weight) && filled(user.height)) return null;
+  return {
+    code: "PROFILE_INCOMPLETE",
+    message: "프로필에서 나이·몸무게·키를 먼저 입력해 주세요.",
+  };
+}
 
 router.post("/", async (req, res) => {
   const { foodName, userId } = req.body;
@@ -121,6 +141,10 @@ router.post("/", async (req, res) => {
     }
 
     const user = rows[0];
+
+    // [추가] 나이·몸무게·키가 비었으면 판정하지 않는다
+    const incomplete = profileIncomplete(user);
+    if (incomplete) return res.status(400).json(incomplete);
 
     const diseases = Array.isArray(user.diseases)
       ? user.diseases.map((d) => d.trim())
@@ -320,6 +344,10 @@ router.post("/label", async (req, res) => {
     }
 
     const user = rows[0];
+    // [추가] 나이·몸무게·키가 비었으면 판정하지 않는다
+    const incomplete = profileIncomplete(user);
+    if (incomplete) return res.status(400).json(incomplete);
+
     const diseases = Array.isArray(user.diseases)
       ? user.diseases.map((d) => d.trim())
       : JSON.parse(user.diseases || "[]").map((d) => d.trim());
@@ -331,16 +359,22 @@ router.post("/label", async (req, res) => {
     const nutrition = {};
     for (const key of LABEL_NUTRITION_KEYS) nutrition[key] = nutritionPer100g[key];
 
+    // [추가] 식품유형 + 제품명 → 통합 중분류 (예: "빵류" → "간식빵"). 못 정하면 null
+    //        [변경] 판정 전에 정한다: 라벨에 없는 식이섬유·인·칼륨(2형 당뇨 ML 입력)을 이 중분류 평균으로 채우기 위해
+    const labelFoodType = typeof foodType === "string" && foodType.trim() ? foodType.trim() : null;
+    const category = labelCategory(labelFoodType, productName);
+    const judgedNutrition = await fillMlFeatures(nutrition, category);
+
     // POST /recommend 와 같은 판정 함수와 같은 질병 심각도 값을 쓴다
     const result = hasDiseases
-      ? await judgeDiseaseNutrition(nutrition, diseases, user.weight, user.height, user.age, user.gender, {
+      ? await judgeDiseaseNutrition(judgedNutrition, diseases, user.weight, user.height, user.age, user.gender, {
           hypertension_stage: user.hypertension_stage || 1,
           ldl_value: user.ldl_value ?? null,
           tg_value: user.tg_value ?? null,
           hdl_value: user.hdl_value ?? null,
           gfr_value: user.gfr_value !== null ? user.gfr_value : 35,
         })
-      : judgeHealthyNutrition(nutrition, user.weight, user.height, user.age, user.gender);
+      : judgeHealthyNutrition(judgedNutrition, user.weight, user.height, user.age, user.gender);
 
     const labelAllergens = Array.isArray(allergenText) ? allergenText : [];
     const labelMayContain = Array.isArray(mayContain) ? mayContain : [];
@@ -359,9 +393,10 @@ router.post("/label", async (req, res) => {
 
     // [추가] 이 사진 분석을 나중에 그대로 다시 할 수 있는 값 (프로필 "내 식품" 에서 누르면 이 값으로 다시 분석)
     //        사용자 건강 정보는 넣지 않는다 → 다시 분석할 때 그때의 프로필로 판정된다
+    //        nutritionPer100g 는 라벨 값 9개만 (평균으로 채운 값은 저장하지 않는다 → 다시 분석할 때 다시 채움)
     const labelInput = {
       productName,
-      foodType: typeof foodType === "string" && foodType.trim() ? foodType.trim() : null,
+      foodType: labelFoodType,
       nutritionPer100g: nutrition,
       allergenText: labelAllergens,
       mayContain: labelMayContain,
@@ -369,8 +404,6 @@ router.post("/label", async (req, res) => {
       ingredients,
       basis: basis ?? null,
     };
-    // [추가] 식품유형 + 제품명 → 통합 중분류 (예: "빵류" → "간식빵"). 못 정하면 null
-    const category = labelCategory(labelInput.foodType, productName);
 
     // [추가] 최근 검색에 사진 결과도 남긴다 (출처 "label"). 실패해도 분석 응답은 그대로
     if (req.user?.id) {
@@ -415,6 +448,7 @@ router.post("/label", async (req, res) => {
 
 // ── GET /recommend/search?q=초코 ─────────────────────────────
 // 제품명에 입력한 글자가 들어간 음식 이름을 최대 10개 반환 (자동완성용)
+// [변경] 같은 이름의 식품이 여러 개여도 한 번만 (예전에는 "신라면" 이 두 번 나왔다)
 router.get("/search", async (req, res) => {
   const q = (req.query.q || "").trim();
   if (!q) return res.json([]);
@@ -423,8 +457,8 @@ router.get("/search", async (req, res) => {
   try {
     const result = await session.run(
       `MATCH (f:Food) WHERE f.name CONTAINS $q
-       RETURN f.name AS name
-       ORDER BY size(f.name) ASC
+       RETURN DISTINCT f.name AS name
+       ORDER BY size(name) ASC, name ASC
        LIMIT 10`,
       { q },
     );

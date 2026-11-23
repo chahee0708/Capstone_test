@@ -1,7 +1,18 @@
+/**
+ * SignupPage.tsx
+ *
+ * 역할: 회원가입 화면. 가입하면 바로 로그인된 상태가 된다 (AuthContext.register)
+ *
+ * 이번에 바뀐 점:
+ *   - [변경] 가입 후 로그인 화면 대신 프로필(건강 정보 탭)로 보낸다
+ *       이미 로그인된 상태인데 로그인 화면으로 보내서 다시 로그인해야 했고,
+ *       나이·몸무게·키를 넣기 전에는 분석할 수 없으므로 (백엔드 PROFILE_INCOMPLETE)
+ */
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate, Link } from "react-router";
 import { Heart } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { useAuth } from "../../contexts/AuthContext";
@@ -32,7 +43,9 @@ export function SignupPage() {
     setErrorMessage("");
     try {
       await authRegister(data.name, data.email, data.password);
-      navigate("/login");
+      // [변경] 가입하면 이미 로그인된 상태 → 건강 정보부터 입력하게 프로필로
+      toast.success("가입이 완료되었습니다", { description: "건강 정보를 먼저 입력해 주세요" });
+      navigate("/profile", { state: { tab: "health" } });
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "회원가입 실패");
     }
