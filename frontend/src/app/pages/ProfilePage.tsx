@@ -13,8 +13,9 @@
  *   - [추가] 나이·몸무게·키가 비어 있으면 "건강 정보" 탭으로 열고 안내 문구를 보인다
  *       (새로 가입한 계정, 분석 화면의 "프로필 입력하기" 링크로 들어온 경우)
  *       location.state.tab === "health" 로 들어와도 건강 정보 탭으로 연다 (회원가입 직후)
- *   - [추가] 저장할 때 나이·몸무게·키가 비었으면 저장하지 않고 알린다
- *       (백엔드가 이 셋이 없으면 판정하지 않는다: routes/recommend.js PROFILE_INCOMPLETE)
+ *   - [변경] 나이·몸무게·키가 비어 있어도 저장된다 (잠깐 저장을 막았다가 되돌림)
+ *       시연 때 값을 지웠다가 "건강검진표로 입력"으로 다시 채워야 해서. 안내 문구는 그대로 보인다
+ *       (백엔드는 이 셋이 없으면 판정하지 않는다: routes/recommend.js PROFILE_INCOMPLETE)
  *
  * 이전 변경(seohee 브랜치 기능 이식):
  *   - [추가] "건강 정보" / "내 식품" 탭. 내 식품 = 관심 식품 + 최근 검색한 식품 (MyFoodsPanel)
@@ -255,13 +256,8 @@ export function ProfilePage() {
 
   // ── 저장 ─────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
-    // [추가] 나이·몸무게·키는 판정에 꼭 필요하다 (비어 있으면 분석이 되지 않는다)
-    if (!basicFilled) {
-      toast.error("나이·몸무게·키를 입력해 주세요", {
-        description: "맞춤 분석에 꼭 필요한 정보예요",
-      });
-      return;
-    }
+    // [변경] 나이·몸무게·키가 비어 있어도 저장한다 (시연: 지웠다가 건강검진표로 다시 채우기)
+    //        비어 있으면 분석만 막힌다 (백엔드 PROFILE_INCOMPLETE → 분석 화면에 "프로필 입력하기" 링크)
     try {
       const res = await fetch(`${API_URL}/users/${USER_ID}`, {
         method: "PUT",
