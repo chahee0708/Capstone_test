@@ -4,7 +4,9 @@
  * 역할: 분석 결과 맨 위의 "판정 카드". 제품명 + 큰 판정 글씨 + 판정 근거(VerdictExplanation)를 보여준다.
  *       2형 당뇨(ML 트랙) 사용자는 판정 아래에 GI 지수 한 줄이 추가된다.
  *
- * 이번 변경(카테고리 그림 + 관심 식품 하트):
+ * 이번 변경: 제품명 글씨 키움(text-sm → text-base/md:text-lg), 제품명 위에 카테고리 이름을 작게 표시
+ *
+ * 이전 변경(카테고리 그림 + 관심 식품 하트):
  *   - [추가] categoryIcon: 통합 중분류 그림(categoryIcons.ts) 주소가 있으면 제품명 줄 오른쪽에 작게 표시
  *   - [추가] headerAction: 제품명 줄 오른쪽 끝에 넣을 버튼 (FoodAnalysisPage 의 관심 식품 하트)
  *
@@ -121,8 +123,12 @@ export function VerdictCard({
           <Icon className={`w-10 h-10 shrink-0 ${style.text}`} />
         )}
         <div className="flex-1 min-w-0">
+          {/* [추가] 그림이 무엇인지 알 수 있게 제품명 위에 카테고리 이름을 작게 */}
+          {categoryIcon && categoryName && (
+            <p className="text-xs text-gray-500 truncate">{categoryName}</p>
+          )}
           <div className="flex items-center gap-2 mb-1">
-            <p className="text-sm text-gray-500 min-w-0 truncate">{productName}</p>
+            <p className="text-base md:text-lg font-medium text-gray-700 min-w-0 truncate">{productName}</p>
             {headerAction && <div className="ml-auto shrink-0">{headerAction}</div>}
           </div>
           <div className="flex items-center justify-between gap-2 flex-wrap">

@@ -6,7 +6,7 @@
  * 이번에 바뀐 점 (새 파일, 이번엔 틀만):
  *   - 백엔드 /recommend 응답에 alternatives 필드가 있을 때만 FoodAnalysisPage 가 이 섹션을 그린다.
  *     지금은 백엔드가 보내지 않으므로 화면에 안 보이는 게 정상. (다음 단계에서 백엔드가 형식을 맞춤)
- *   - 빈 배열이면 "같은 종류에서 더 나은 음식을 찾지 못했어요." 한 줄만 표시
+ *   - 빈 배열이면 "같은 종류에서 더 나은 음식을 찾지 못했어요." 한 줄만 표시 ([추가] 부제도 숨김)
  *   - 카드를 누르면 onSelect(음식 이름) → 분석 페이지가 그 이름으로 다시 분석한다
  *
  * ── 이번 변경(백엔드 대체음식 연결) — 디자인 변경 없음, 형식만 맞춤 ──
@@ -55,10 +55,13 @@ export function AlternativesSection({ alternatives, onSelect }: Props) {
   return (
     <Card className="p-6">
       {/* ── 제목 + 부제 ── */}
-      <h3 className="font-semibold">이런 음식은 어때요?</h3>
-      <p className="text-xs text-gray-500 mt-0.5 mb-4">
-        같은 종류 중 회원님께 더 나은 음식을 원재료가 비슷한 순서로 골랐어요.
-      </p>
+      <h3 className={`font-semibold ${items.length === 0 ? "mb-4" : ""}`}>이런 음식은 어때요?</h3>
+      {/* [추가] 부제는 대체음식이 있을 때만 (못 찾았으면 아래 안내 한 줄만) */}
+      {items.length > 0 && (
+        <p className="text-xs text-gray-500 mt-0.5 mb-4">
+          같은 종류 중 회원님께 더 나은 음식을 원재료가 비슷한 순서로 골랐어요.
+        </p>
+      )}
 
       {items.length === 0 ? (
         // ── 대체음식을 못 찾은 경우 ──

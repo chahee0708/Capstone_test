@@ -7,6 +7,7 @@
  *
  * CSV 열: name, count, category, description, source, reviewed, examples
  *   - 설명(description)이 빈 줄은 없는 것으로 본다 → 화면에서 이름만 보인다
+ *   - [추가] 누구나 아는 재료(OBVIOUS_NAMES: 돼지고기·밀가루·양배추·대파 등)는 설명을 보내지 않는다
  *   - 서버가 켜질 때 한 번만 읽는다. CSV 를 고치면 백엔드를 다시 빌드·재시작해야 반영된다
  *
  * 예) withInfo(["설탕", "정제수"]) →
@@ -41,6 +42,25 @@ function parseCsv(text) {
   return rows;
 }
 
+// [추가] 설명이 없어도 다 아는 재료 → 설명표에 있어도 설명을 빼고 이름만 보인다
+//   빼고 싶은 재료가 더 있으면 여기에 이름(설명표 name 열과 같은 글자)을 추가한다
+const OBVIOUS_NAMES = new Set([
+  // 고기·해산물·달걀
+  "돼지고기", "닭가슴살", "새우", "계란",
+  // 곡류·가루
+  "밀가루", "쌀", "쌀가루", "찹쌀가루", "옥수수", "옥수수가루", "메밀가루", "감자전분",
+  // 채소·향신채·버섯·과일
+  "양배추", "배추", "당근", "숙주", "마늘", "양파", "부추", "대파", "생강", "청양고추",
+  "새송이버섯", "딸기",
+  // 콩·견과·해조
+  "두부", "참깨", "볶음땅콩", "구운김", "건미역",
+  // 유제품
+  "우유", "버터", "치즈", "크림치즈",
+  // 기본 양념·기름·물
+  "설탕", "백설탕", "하얀설탕", "소금", "천일염", "정제수", "참기름", "올리브유", "콩기름",
+  "고춧가루", "후춧가루", "후추가루", "간장", "고추장", "된장", "김치", "당면",
+]);
+
 // 이름 → { category, description, source } (설명이 있는 줄만)
 const infoByName = new Map();
 try {
@@ -50,7 +70,7 @@ try {
   for (const r of rows) {
     const name = (r[col("name")] || "").trim();
     const description = (r[col("description")] || "").trim();
-    if (!name || !description) continue;
+    if (!name || !description || OBVIOUS_NAMES.has(name)) continue;
     infoByName.set(name, {
       category: (r[col("category")] || "").trim() || null,
       description,

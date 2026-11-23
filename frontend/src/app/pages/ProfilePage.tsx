@@ -11,7 +11,7 @@
  *
  * 이번 변경(seohee 브랜치 기능 이식):
  *   - [추가] "건강 정보" / "내 식품" 탭. 내 식품 = 관심 식품 + 최근 검색한 식품 (MyFoodsPanel)
- *       "사진으로 입력"(건강검진표 OCR) 버튼은 건강 정보 탭에서만 보인다
+ *       "건강검진표로 입력"(건강검진표 OCR) 버튼은 건강 정보 탭에서만 보인다
  *   - [변경] 기본 정보·지질 수치·GFR 숫자 칸: 밑줄 칸 + 떠오르는 이름표 (FloatingField, seohee 브랜치 형식), 단위는 칸 오른쪽 끝
  *   - [변경] 질환·알레르기: 직접 입력 없이 버튼으로 켜고 끄기 (ToggleChips). 알레르기는 판정이 아는 17개 묶음 전부
  *       예전에 직접 입력해 저장된 값도 버튼으로 보여서 끌 수 있다 (withSaved)
@@ -37,7 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import { toast } from "sonner";
 import { MyFoodsPanel } from "../../components/MyFoodsPanel";
 import { prepareImageForOcr } from "../../components/prepareImageForOcr";
-import checkupIcon from "../../assets/icons/document.png"; // [추가] 사진으로 입력 버튼 아이콘
+import checkupIcon from "../../assets/icons/document.png"; // [추가] 건강검진표로 입력 버튼 아이콘
 import { FloatingField } from "../../components/FloatingField"; // [추가] 밑줄 입력칸 (seohee 브랜치 형식)
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -118,7 +118,7 @@ export function ProfilePage() {
   const { user, token } = useAuth();
   const USER_ID = user?.id ?? 1;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // [추가] 현재 탭: "health"(건강 정보) | "foods"(내 식품). 사진으로 입력 버튼은 건강 정보 탭에서만 보인다
+  // [추가] 현재 탭: "health"(건강 정보) | "foods"(내 식품). 건강검진표로 입력 버튼은 건강 정보 탭에서만 보인다
   const [tab, setTab] = useState("health");
 
   const [profile, setProfile] = useState({
@@ -281,10 +281,7 @@ export function ProfilePage() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">건강 프로필</h1>
-            <p className="text-gray-600">
-              정확한 분석을 위해 건강 정보를 입력해주세요
-            </p>
+            <h1 className="text-2xl md:text-3xl font-bold">프로필</h1>
           </div>
 
           {/* ── 건강검진표 사진 OCR 자동 채우기 버튼 ([변경] 건강 정보 탭에서만) ── */}
@@ -318,7 +315,7 @@ export function ProfilePage() {
                   WebkitMaskRepeat: "no-repeat",
                 }}
               />
-              {isOcrProcessing ? "건강검진표 입력중···" : "사진으로 입력"}
+              {isOcrProcessing ? "건강검진표 입력중···" : "건강검진표로 입력"}
             </Button>
           </div>
         </div>
@@ -326,8 +323,9 @@ export function ProfilePage() {
         {/* [추가] 건강 정보 / 내 식품 탭 */}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="health">건강 정보</TabsTrigger>
+            {/* 탭 순서: 내 식품 → 건강 정보 */}
             <TabsTrigger value="foods">내 식품</TabsTrigger>
+            <TabsTrigger value="health">건강 정보</TabsTrigger>
           </TabsList>
 
           <TabsContent value="foods">

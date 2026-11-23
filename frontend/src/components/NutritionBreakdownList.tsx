@@ -61,10 +61,10 @@ export function NutritionBreakdownList({ data }: Props) {
               {/* Progress는 100을 넘으면 꽉 찬 상태로 보이므로 값을 100에서 자른다 */}
               <div className="relative">
                 <Progress value={Math.min(percent, 100)} className="h-2" />
-                {/* [추가] 25% 한도선 (빨간 점선) */}
+                {/* [추가] 25% 한도선 (빨간 점선) — 초록 막대(h-2)와 같은 높이 */}
                 <div
                   aria-hidden
-                  className="absolute -top-1 -bottom-1 border-l-2 border-dashed border-red-500"
+                  className="absolute inset-y-0 border-l-2 border-dashed border-red-500"
                   style={{ left: `${HIGH_LINE}%` }}
                 />
               </div>

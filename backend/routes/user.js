@@ -34,21 +34,24 @@ router.get("/:id", async (req, res) => {
       ? user.allergens
       : JSON.parse(user.allergens || "[]");
 
+    // [추가] FLOAT 칸은 근사값으로 저장돼 170.2 가 170.1999969482422 로 읽힌다 → 소수 첫째 자리로 반올림
+    const round1 = (v) => (v == null ? v : Math.round(Number(v) * 10) / 10);
+
     res.json({
       id:                 user.id,
       name:               user.name,
       age:                user.age,
-      weight:             user.weight,
-      height:             user.height,
+      weight:             round1(user.weight),
+      height:             round1(user.height),
       gender:             user.gender,
       diseases,
       allergens,
       // 질병 심각도 필드
       hypertension_stage: user.hypertension_stage ?? 1,
-      ldl_value:          user.ldl_value  ?? null,
-      tg_value:           user.tg_value   ?? null,
-      hdl_value:          user.hdl_value  ?? null,
-      gfr_value:          user.gfr_value  ?? 35,
+      ldl_value:          round1(user.ldl_value)  ?? null,
+      tg_value:           round1(user.tg_value)   ?? null,
+      hdl_value:          round1(user.hdl_value)  ?? null,
+      gfr_value:          round1(user.gfr_value)  ?? 35,
     });
 
   } catch (err) {
